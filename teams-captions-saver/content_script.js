@@ -264,14 +264,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         case 'return_transcript':
             console.log("return_transcript request received");
             
-            if (!captureSystem.isCapturing()) {
-                alert("No captions captured yet. Ensure live captions are enabled and try again.");
+            const transcripts = captureSystem.getTranscripts();
+            if (!captureSystem.capturing || transcripts.length === 0) {
+                alert("Oops! No captions were captured. Please make sure captions are turned on.");
                 return;
             }
 
             chrome.runtime.sendMessage({
                 message: "download_captions",
-                transcriptArray: captureSystem.getTranscripts(),
+                transcriptArray: transcripts,
                 meetingTitle: captureSystem.getMeetingTitle()
             });
             break;
@@ -279,14 +280,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         case 'get_captions_for_viewing':
             console.log("get_captions_for_viewing request received");
             
-            if (!captureSystem.isCapturing()) {
-                alert("No captions captured yet. Ensure live captions are enabled and try again.");
+            const viewTranscripts = captureSystem.getTranscripts();
+            if (!captureSystem.capturing || viewTranscripts.length === 0) {
+                alert("Oops! No captions were captured. Please make sure captions are turned on.");
                 return;
             }
 
             chrome.runtime.sendMessage({
                 message: "display_captions",
-                transcriptArray: captureSystem.getTranscripts()
+                transcriptArray: viewTranscripts
             });
             break;
 
