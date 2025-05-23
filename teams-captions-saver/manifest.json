@@ -12,7 +12,8 @@
   "homepage_url": "https://spdenis.com",  
   "permissions": [
     "downloads",
-    "activeTab"
+    "activeTab",
+    "storage"
   ],
   "host_permissions": [
       "https://teams.microsoft.com/*"
