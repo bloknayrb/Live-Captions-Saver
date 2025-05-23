@@ -7,11 +7,61 @@ class TeamsTranscriptCapture {
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 50;
         this.isProcessing = false;
+        this.storageKey = 'teams_captions_' + Date.now();
         
         // Debounce processing to prevent race conditions
         this.debouncedProcess = this.debounce(this.processNewCaptions.bind(this), 100);
         
+        this.loadExistingCaptions();
         this.startCapture();
+    }
+
+    async loadExistingCaptions() {
+        try {
+            // Check for existing captions from previous session
+            const result = await chrome.storage.local.get(null);
+            const existingKeys = Object.keys(result).filter(key => key.startsWith('teams_captions_'));
+            
+            if (existingKeys.length > 0) {
+                // Load most recent session
+                const latestKey = existingKeys.sort().pop();
+                const savedData = result[latestKey];
+                
+                if (savedData && savedData.length > 0) {
+                    this.transcriptArray = savedData;
+                    this.storageKey = latestKey;
+                    console.log(`Recovered ${savedData.length} captions from previous session`);
+                    
+                    // Ask user if they want to keep old captions
+                    const keepOld = confirm(`Found ${savedData.length} captions from a previous session. Keep them?`);
+                    if (!keepOld) {
+                        this.transcriptArray = [];
+                        await chrome.storage.local.remove(latestKey);
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Error loading existing captions:', error);
+        }
+    }
+
+    async saveCaptions() {
+        try {
+            await chrome.storage.local.set({
+                [this.storageKey]: this.transcriptArray
+            });
+        } catch (error) {
+            console.error('Error saving captions:', error);
+        }
+    }
+
+    async clearSavedCaptions() {
+        try {
+            await chrome.storage.local.remove(this.storageKey);
+            console.log('Saved captions cleared after successful download');
+        } catch (error) {
+            console.error('Error clearing saved captions:', error);
+        }
     }
 
     debounce(func, wait) {
@@ -37,6 +87,9 @@ class TeamsTranscriptCapture {
         
         this.setupObserver();
         this.capturing = true;
+        
+        // Start periodic backup saves
+        this.startPeriodicBackup();
         
         console.log('Transcript capture started successfully');
     }
@@ -93,6 +146,15 @@ class TeamsTranscriptCapture {
             }
         }
         return null;
+    }
+
+    startPeriodicBackup() {
+        // Save captions every 30 seconds as backup
+        setInterval(() => {
+            if (this.transcriptArray.length > 0) {
+                this.saveCaptions();
+            }
+        }, 30000);
     }
 
     setupObserver() {
@@ -211,11 +273,13 @@ class TeamsTranscriptCapture {
             if (this.transcriptArray[existingIndex].Text !== Text) {
                 this.transcriptArray[existingIndex] = { Name, Text, Time, ID };
                 console.log('Updated transcript:', { Name, Text: Text.substring(0, 50) + '...' });
+                this.saveCaptions(); // Auto-save on update
             }
         } else {
             // Add new transcript
             this.transcriptArray.push({ Name, Text, Time, ID });
             console.log('New transcript:', { Name, Text: Text.substring(0, 50) + '...' });
+            this.saveCaptions(); // Auto-save on new caption
         }
     }
 
@@ -274,6 +338,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 message: "download_captions",
                 transcriptArray: transcripts,
                 meetingTitle: captureSystem.getMeetingTitle()
+            }, (response) => {
+                // Clear saved captions after successful download
+                captureSystem.clearSavedCaptions();
             });
             break;
 
