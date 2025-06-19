@@ -13,12 +13,12 @@
             align-items: center;
             justify-content: center;
             background-color: #f4f4f4;
-            height: 290px;
+            height: 320px;
             width: 320px;
         }
 
         button {
-            margin: 10px;
+            margin: 8px;
             padding: 10px 20px;
             font-size: 16px;
             border: none;
@@ -27,6 +27,7 @@
             background-color: #007BFF;
             cursor: pointer;
             transition: background-color 0.3s ease;
+            min-width: 120px;
         }
 
         button:hover {
@@ -49,28 +50,62 @@
             background-color: #138496;
         }
 
+        #resetButton {
+            background-color: #ffc107;
+            color: #212529;
+            font-size: 14px;
+            padding: 8px 16px;
+        }
+
+        #resetButton:hover {
+            background-color: #e0a800;
+        }
+
         .button-container {
             display: flex;
             flex-direction: row;
             justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .secondary-actions {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #ddd;
         }
 
         span {
             font-size: 12px;
             color: #6c757d;
-            padding: 30px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .version-info {
+            font-size: 10px;
+            color: #999;
+            margin-top: 5px;
         }
     </style>
     <script src="popup.js" defer></script>
 </head>
 
 <body>
-    <h2 id="popup-header">Captions Saver v3</h2>
+    <h2 id="popup-header">Captions Saver v3.6+</h2>
     <h3><i>New Teams Only</i></h3>
     <span>To start, click More > Language and Speech > Turn on live captions</span>
+    
     <div class="button-container">
         <button id="saveButton">Save Captions</button>
         <button id="viewButton">View Captions</button>
+    </div>
+    
+    <div class="secondary-actions">
+        <button id="resetButton">Clear Transcript</button>
+    </div>
+    
+    <div class="version-info">
+        Enhanced: XSS Protection, Smart Deduplication, Error Handling
     </div>
 </body>
 
