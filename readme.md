@@ -84,6 +84,33 @@ But what if you can't use extensions for security reasons? Well, in this case:
 
 Please note that this extension works on Microsoft Teams pages only during the meetings and only when the live captions are first turned on.
 
+## Recent Improvements (v3.6.3+)
+
+### 🏗️ Modular Architecture Refactor
+The extension has been completely refactored from a monolithic structure into a clean, maintainable modular architecture:
+
+- **Config Module**: Centralized configuration and constants
+- **DOMUtils Module**: Safe DOM operations with comprehensive error handling
+- **TextProcessor Module**: Advanced text normalization and similarity algorithms
+- **StateManager Module**: Processing coordination and race condition prevention
+- **MemoryManager Module**: Automatic cleanup and memory optimization
+- **MeetingDetector Module**: Efficient meeting state detection with caching
+- **CaptionProcessor Module**: Core caption processing logic
+- **Controller Module**: Main orchestration and public API
+
+### 🔧 Enhanced Reliability
+- **Improved Error Handling**: Comprehensive try-catch blocks and graceful degradation
+- **Memory Management**: Automatic cleanup prevents memory leaks during long meetings
+- **Race Condition Prevention**: Centralized state management eliminates timing conflicts
+- **DOM Selector Resilience**: Multiple fallback strategies for different Teams UI versions
+- **Performance Optimization**: Debounced processing and intelligent caching
+
+### 🧪 Development & Testing
+- **Comprehensive Test Suite**: Automated testing framework for all core functions
+- **Code Analysis Tools**: Static analysis for architectural validation
+- **Performance Monitoring**: Built-in performance tracking and optimization
+- **Developer Documentation**: Enhanced CLAUDE.md for future development guidance
+
 ## Contributing (Developers only)
 
 ### Load unpacked extension in Chrome/Edge/Brave browser
@@ -97,6 +124,24 @@ Please note that this extension works on Microsoft Teams pages only during the m
 - Open https://teams.microsoft.com/v2/
 - Open calendar and join a meeting.
 - Press ALT+SHIFT+C to turn on live captions
+
+### Development Testing
+
+For comprehensive testing of the modular architecture:
+
+1. Load the extension and join a Teams meeting with live captions
+2. Open browser console and run: `testCaptions.runAllTests()`
+3. Monitor console output for any errors or warnings
+4. Test caption capture, viewing, and download functionality
+
+### Architecture Overview
+
+The new modular structure provides:
+- **Single Responsibility**: Each module has a focused purpose
+- **Error Isolation**: Failures in one module don't crash the entire system
+- **Testability**: Individual modules can be tested independently
+- **Maintainability**: Clear separation of concerns makes updates easier
+- **Performance**: Optimized processing with intelligent caching and cleanup
 
 ### Update the manifest.json file
 
