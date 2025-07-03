@@ -25,6 +25,16 @@ class CaptionManager {
         // Reliability tracking
         this.lastCaptionTime = Date.now();
         this.captionCount = 0;
+        
+        // Hybrid snapshot-based capture system (inspired by Zerg00s)
+        this.captureMode = 'snapshot'; // 'snapshot' or 'progressive' (fallback)
+        this.lastCaptionSnapshot = '';
+        this.silenceTimer = null;
+        this.snapshotCheckTimer = null;
+        this.lastSnapshotTime = Date.now();
+        this.pendingCaptionData = [];
+        this.fallbackModeStartTime = null;
+        this.snapshotFailureCount = 0;
     }
     
     /**
@@ -48,6 +58,383 @@ class CaptionManager {
     addCaptionHash(name, text) {
         const hash = this.generateCaptionHash(name, text);
         this.captionHashSet.add(hash);
+    }
+    
+    /**
+     * Generate snapshot of current caption state from DOM
+     * @returns {string} Serialized snapshot of current captions
+     */
+    generateCaptionSnapshot() {
+        try {
+            const captionContainerSelectors = [
+                "[data-tid='closed-caption-renderer-wrapper']", // Teams v2 structure
+                "[data-tid='closed-captions-renderer']"         // Legacy structure
+            ];
+            
+            const closedCaptionsContainer = safeDOMQuery(document, captionContainerSelectors);
+            if (!closedCaptionsContainer) {
+                return '';
+            }
+            
+            const captionSelectors = [
+                '.fui-ChatMessageCompact',
+                '.caption-item',
+                '[data-tid="caption-text"]'
+            ];
+            
+            let transcripts = [];
+            for (const selector of captionSelectors) {
+                transcripts = closedCaptionsContainer.querySelectorAll(selector);
+                if (transcripts.length > 0) break;
+            }
+            
+            const captionData = [];
+            transcripts.forEach((transcript) => {
+                try {
+                    const authorElement = safeDOMQuery(transcript, ['[data-tid="author"]', '.author', '.speaker']);
+                    const textElement = safeDOMQuery(transcript, ['[data-tid="closed-caption-text"]', '.caption-text', '.text']);
+                    
+                    if (authorElement && textElement) {
+                        const name = authorElement.innerText?.trim();
+                        const text = textElement.innerText?.trim();
+                        if (name && text && text.length > 0) {
+                            captionData.push(`${name}:${text}`);
+                        }
+                    }
+                } catch (error) {
+                    Logger.warn('Error processing transcript element:', error);
+                }
+            });
+            
+            return captionData.join('|');
+        } catch (error) {
+            Logger.error('Error generating caption snapshot:', error);
+            return '';
+        }
+    }
+    
+    /**
+     * Start snapshot-based capture monitoring
+     */
+    startSnapshotMonitoring() {
+        this.stopSnapshotMonitoring(); // Clean up any existing timers
+        
+        this.snapshotCheckTimer = setInterval(() => {
+            this.checkCaptionSnapshot();
+        }, SNAPSHOT_CHECK_INTERVAL);
+        
+        Logger.info('Snapshot monitoring started');
+    }
+    
+    /**
+     * Stop snapshot-based capture monitoring
+     */
+    stopSnapshotMonitoring() {
+        if (this.snapshotCheckTimer) {
+            clearInterval(this.snapshotCheckTimer);
+            this.snapshotCheckTimer = null;
+        }
+        
+        if (this.silenceTimer) {
+            clearTimeout(this.silenceTimer);
+            this.silenceTimer = null;
+        }
+        
+        Logger.debug('Snapshot monitoring stopped');
+    }
+    
+    /**
+     * Check for caption changes and manage silence detection
+     */
+    checkCaptionSnapshot() {
+        try {
+            const currentSnapshot = this.generateCaptionSnapshot();
+            
+            if (currentSnapshot !== this.lastCaptionSnapshot) {
+                Logger.debug('Caption changes detected, resetting silence timer');
+                
+                // Changes detected - reset silence timer
+                this.resetSilenceTimer();
+                this.lastCaptionSnapshot = currentSnapshot;
+                this.lastSnapshotTime = Date.now();
+                this.snapshotFailureCount = 0; // Reset failure count on success
+                
+                // Store current snapshot data for potential processing
+                this.pendingCaptionData = this.parseCaptionSnapshot(currentSnapshot);
+                
+            } else if (this.pendingCaptionData.length >= MIN_CAPTIONS_FOR_STABILITY) {
+                // No changes and we have sufficient captions - check if silence period has elapsed
+                const timeSinceLastChange = Date.now() - this.lastSnapshotTime;
+                if (timeSinceLastChange >= CAPTION_STABILITY_DELAY) {
+                    Logger.info(`Silence detected (${timeSinceLastChange}ms), processing stable caption batch`);
+                    this.processStableCaptionBatch();
+                }
+            }
+            
+            // Check for snapshot mode failure
+            this.checkSnapshotModeHealth();
+            
+        } catch (error) {
+            Logger.error('Error in checkCaptionSnapshot:', error);
+            this.snapshotFailureCount++;
+        }
+    }
+    
+    /**
+     * Reset the silence detection timer
+     */
+    resetSilenceTimer() {
+        if (this.silenceTimer) {
+            clearTimeout(this.silenceTimer);
+        }
+        
+        this.silenceTimer = setTimeout(() => {
+            Logger.debug('Silence timer expired, processing captions');
+            this.processStableCaptionBatch();
+        }, CAPTION_STABILITY_DELAY);
+    }
+    
+    /**
+     * Parse caption snapshot into structured data
+     * @param {string} snapshot - Snapshot string to parse
+     * @returns {Array} Array of caption objects
+     */
+    parseCaptionSnapshot(snapshot) {
+        if (!snapshot) return [];
+        
+        return snapshot.split('|').map(entry => {
+            const [name, ...textParts] = entry.split(':');
+            return {
+                name: name?.trim(),
+                text: textParts.join(':')?.trim(),
+                timestamp: new Date().toLocaleTimeString()
+            };
+        }).filter(entry => entry.name && entry.text);
+    }
+    
+    /**
+     * Process stable caption batch with smart deduplication (core of snapshot approach)
+     */
+    processStableCaptionBatch() {
+        try {
+            if (this.pendingCaptionData.length === 0) {
+                Logger.debug('No pending captions to process');
+                return;
+            }
+            
+            Logger.info(`Processing stable caption batch: ${this.pendingCaptionData.length} captions`);
+            
+            // Step 1: Remove exact duplicates within the batch itself
+            const uniqueBatchCaptions = this.deduplicateWithinBatch(this.pendingCaptionData);
+            Logger.debug(`After internal deduplication: ${uniqueBatchCaptions.length} unique captions`);
+            
+            // Step 2: Process each unique caption
+            let addedCount = 0;
+            uniqueBatchCaptions.forEach(captionData => {
+                const { name, text, timestamp } = captionData;
+                
+                // Check for exact duplicates against existing transcript
+                if (!this.isDuplicateCaption(name, text)) {
+                    // Add to transcript array
+                    this.transcriptArray.push({
+                        Name: name,
+                        Text: text,
+                        Time: timestamp,
+                        ID: `caption_${this.transcriptIdCounter++}`
+                    });
+                    
+                    // Add to hash set for future duplicate detection
+                    this.addCaptionHash(name, text);
+                    addedCount++;
+                    
+                    Logger.debug(`Added stable caption: "${text}" by ${name}`);
+                } else {
+                    Logger.debug(`Skipped existing duplicate: "${text}" by ${name}`);
+                }
+            });
+            
+            // Update reliability tracking
+            if (addedCount > 0) {
+                this.lastCaptionTime = Date.now();
+                this.captionCount += addedCount;
+                
+                // Trigger memory management if needed
+                if (this.transcriptArray.length % MEMORY_CHECK_INTERVAL === 0) {
+                    enforceMemoryLimits();
+                }
+                
+                // Backup to localStorage periodically
+                if (this.transcriptArray.length % 100 === 0) {
+                    this.backupToLocalStorage();
+                }
+            }
+            
+            // Clear pending data
+            this.pendingCaptionData = [];
+            
+            Logger.info(`Batch processing complete: ${addedCount} new captions added`);
+            
+        } catch (error) {
+            Logger.error('Error processing stable caption batch:', error);
+            // In case of error, fall back to progressive mode temporarily
+            this.switchToFallbackMode('Batch processing error');
+        }
+    }
+    
+    /**
+     * Deduplicate captions within a batch using smart progressive detection
+     * @param {Array} captionBatch - Array of caption objects to deduplicate
+     * @returns {Array} Deduplicated array with only the most complete captions
+     */
+    deduplicateWithinBatch(captionBatch) {
+        if (captionBatch.length <= 1) return captionBatch;
+        
+        // Group captions by speaker
+        const speakerGroups = {};
+        captionBatch.forEach((caption, index) => {
+            if (!speakerGroups[caption.name]) {
+                speakerGroups[caption.name] = [];
+            }
+            speakerGroups[caption.name].push({ ...caption, originalIndex: index });
+        });
+        
+        const finalCaptions = [];
+        
+        // Process each speaker's captions
+        Object.keys(speakerGroups).forEach(speakerName => {
+            const captions = speakerGroups[speakerName];
+            
+            if (captions.length === 1) {
+                // Single caption for this speaker - keep it
+                finalCaptions.push(captions[0]);
+            } else {
+                // Multiple captions from same speaker - apply smart deduplication
+                const deduplicatedCaptions = this.smartDeduplicateGroup(captions);
+                finalCaptions.push(...deduplicatedCaptions);
+            }
+        });
+        
+        // Sort by original index to maintain temporal order
+        finalCaptions.sort((a, b) => a.originalIndex - b.originalIndex);
+        
+        // Remove the originalIndex property
+        return finalCaptions.map(caption => {
+            const { originalIndex, ...cleanCaption } = caption;
+            return cleanCaption;
+        });
+    }
+    
+    /**
+     * Smart deduplication for a group of captions from the same speaker
+     * @param {Array} captionGroup - Array of captions from same speaker
+     * @returns {Array} Deduplicated captions
+     */
+    smartDeduplicateGroup(captionGroup) {
+        if (captionGroup.length <= 1) return captionGroup;
+        
+        const result = [];
+        const processed = new Set();
+        
+        for (let i = 0; i < captionGroup.length; i++) {
+            if (processed.has(i)) continue;
+            
+            const currentCaption = captionGroup[i];
+            let shouldKeep = true;
+            
+            // Check if this caption is a progressive update of a later caption
+            for (let j = i + 1; j < captionGroup.length; j++) {
+                if (processed.has(j)) continue;
+                
+                const laterCaption = captionGroup[j];
+                const progressiveCheck = isWhitelistedProgressive(currentCaption.text, laterCaption.text);
+                
+                if (progressiveCheck.isProgressive && 
+                    (progressiveCheck.confidence === 'HIGH' || progressiveCheck.confidence === 'VERY_HIGH')) {
+                    
+                    Logger.debug(`Within-batch progressive update detected: "${currentCaption.text}" -> "${laterCaption.text}"`);
+                    shouldKeep = false; // Skip this caption, keep the later one
+                    processed.add(i);
+                    break;
+                }
+            }
+            
+            if (shouldKeep) {
+                result.push(currentCaption);
+                processed.add(i);
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Check snapshot mode health and switch to fallback if needed
+     */
+    checkSnapshotModeHealth() {
+        // Check for excessive failures
+        if (this.snapshotFailureCount > 5) {
+            this.switchToFallbackMode('Excessive snapshot failures');
+            return;
+        }
+        
+        // Check for emergency capture threshold
+        if (this.pendingCaptionData.length > EMERGENCY_CAPTURE_THRESHOLD) {
+            Logger.warn(`Emergency capture triggered: ${this.pendingCaptionData.length} pending captions`);
+            this.processStableCaptionBatch(); // Force process large queue
+        }
+        
+        // Check for fallback timeout
+        if (this.fallbackModeStartTime && 
+            Date.now() - this.fallbackModeStartTime > FALLBACK_TIMEOUT) {
+            Logger.info('Attempting to return to snapshot mode from fallback');
+            this.switchToSnapshotMode();
+        }
+    }
+    
+    /**
+     * Switch to fallback (progressive) mode
+     */
+    switchToFallbackMode(reason = 'Unknown') {
+        if (this.captureMode === 'progressive') return; // Already in fallback mode
+        
+        Logger.warn(`Switching to fallback mode: ${reason}`);
+        this.captureMode = 'progressive';
+        this.fallbackModeStartTime = Date.now();
+        this.stopSnapshotMonitoring();
+        
+        // Process any pending captions before switching
+        if (this.pendingCaptionData.length > 0) {
+            this.processStableCaptionBatch();
+        }
+    }
+    
+    /**
+     * Switch back to snapshot mode
+     */
+    switchToSnapshotMode() {
+        Logger.info('Switching to snapshot mode');
+        this.captureMode = 'snapshot';
+        this.fallbackModeStartTime = null;
+        this.snapshotFailureCount = 0;
+        this.lastCaptionSnapshot = '';
+        this.pendingCaptionData = [];
+        this.startSnapshotMonitoring();
+    }
+    
+    /**
+     * Backup captions to localStorage for crash recovery
+     */
+    backupToLocalStorage() {
+        try {
+            localStorage.setItem('caption_saver_backup', JSON.stringify({
+                data: this.transcriptArray.slice(-500), // Keep last 500 entries as backup
+                timestamp: Date.now(),
+                meetingId: this.currentMeetingId
+            }));
+            Logger.debug(`Backup saved: ${this.transcriptArray.length} total captions`);
+        } catch (error) {
+            Logger.warn('Backup to localStorage failed:', error);
+        }
     }
 }
 
@@ -104,11 +491,18 @@ const AUTO_SAVE_THRESHOLD = 5000; // Auto-save when reaching this threshold
 const MEETING_CHECK_INTERVAL = 10000; // Check for meeting changes every 10 seconds
 const SAFE_REMOVAL_RECENT_ENTRIES = 3; // Only consider last 3 entries as "recent"
 const PROGRESSIVE_CHECK_LOOKBACK = 5; // Check last 5 entries for progressive updates
-const MIN_TEXT_LENGTH_FOR_ANALYSIS = 3; // Minimum text length for progressive analysis
-const MIN_PREFIX_EXPANSION_LENGTH = 5; // Minimum additional chars for prefix expansion
+const MIN_TEXT_LENGTH_FOR_ANALYSIS = 1; // Minimum text length for progressive analysis
+const MIN_PREFIX_EXPANSION_LENGTH = 2; // Minimum additional chars for prefix expansion
 const MEMORY_CHECK_INTERVAL = 100; // Check memory limits every 100 additions
 const DEBOUNCE_DELAY = 300; // Debounce DOM mutations to prevent race conditions
 const MAX_RETRIES = 3; // Maximum retries for failed operations
+
+// Hybrid snapshot-based capture constants (inspired by Zerg00s approach)
+const CAPTION_STABILITY_DELAY = 4000; // Wait 4 seconds for caption stability (natural speech pause)
+const MIN_CAPTIONS_FOR_STABILITY = 3; // Minimum captions before considering stability processing
+const SNAPSHOT_CHECK_INTERVAL = 1000; // Check for caption changes every 1 second
+const FALLBACK_TIMEOUT = 10000; // Switch to fallback mode if snapshot mode fails for 10+ seconds
+const EMERGENCY_CAPTURE_THRESHOLD = 50; // Emergency capture if queue exceeds this size
 
 /**
  * Simple logging framework with levels
@@ -235,6 +629,45 @@ function checkForNewMeeting() {
 }
 
 /**
+ * Aggressive text normalization for better progressive detection
+ * @param {string} text - Text to normalize
+ * @returns {string} Normalized text
+ */
+function normalizeTextForComparison(text) {
+    if (!text) return '';
+    
+    return text
+        .trim()
+        .replace(/\s+/g, ' ')  // Replace multiple spaces/tabs/newlines with single space
+        .replace(/\s*([.!?;,])\s*/g, '$1')  // Normalize punctuation spacing
+        .replace(/\s*$/, '');  // Remove trailing whitespace
+}
+
+/**
+ * Log detailed analysis of progressive detection for debugging
+ * @param {string} oldText - Previous caption text  
+ * @param {string} newText - Current caption text
+ * @param {Object} result - Detection result
+ */
+function logProgressiveAnalysis(oldText, newText, result) {
+    if (Logger.shouldLog('DEBUG')) {
+        Logger.debug('Progressive Analysis:', {
+            oldText: `"${oldText}"`,
+            newText: `"${newText}"`,
+            oldLength: oldText.length,
+            newLength: newText.length,
+            lengthDiff: newText.length - oldText.length,
+            isProgressive: result.isProgressive,
+            confidence: result.confidence,
+            pattern: result.pattern,
+            startsWithOld: newText.startsWith(oldText),
+            oldWords: oldText.split(/\s+/).length,
+            newWords: newText.split(/\s+/).length
+        });
+    }
+}
+
+/**
  * Check if new text is a safe progressive update of old text
  * Uses whitelist of very specific patterns to minimize false positives
  * @param {string} oldText - Previous caption text
@@ -246,51 +679,146 @@ function isWhitelistedProgressive(oldText, newText) {
         return {isProgressive: false, confidence: 'NONE', pattern: 'No text provided'};
     }
     
-    const oldTrimmed = oldText.trim();
-    const newTrimmed = newText.trim();
+    const oldTrimmed = normalizeTextForComparison(oldText);
+    const newTrimmed = normalizeTextForComparison(newText);
     
     // Prevent empty or very short text issues
     if (oldTrimmed.length < MIN_TEXT_LENGTH_FOR_ANALYSIS || newTrimmed.length < MIN_TEXT_LENGTH_FOR_ANALYSIS) {
         return {isProgressive: false, confidence: 'NONE', pattern: 'Text too short to analyze'};
     }
     
-    // Pattern 1: Exact prefix expansion (VERY HIGH confidence)
+    // Pattern 1a: Very short expansion (HIGH confidence) - for cases like "OK" -> "OK so"
+    if (oldTrimmed.length <= 5 && newTrimmed.startsWith(oldTrimmed) && newTrimmed.length > oldTrimmed.length) {
+        const addedText = newTrimmed.substring(oldTrimmed.length).trim();
+        if (addedText.length > 0 && addedText.length <= 10 && /^[\s\w]/.test(addedText)) {
+            const result = {
+                isProgressive: true, 
+                confidence: 'HIGH', 
+                pattern: `Short expansion: adds "${addedText}"`
+            };
+            logProgressiveAnalysis(oldText, newText, result);
+            return result;
+        }
+    }
+    
+    // Pattern 1b: Exact prefix expansion (VERY HIGH confidence)
     if (newTrimmed.startsWith(oldTrimmed) && newTrimmed.length > oldTrimmed.length + MIN_PREFIX_EXPANSION_LENGTH) {
         // Additional safety: must end on word boundary
         const addedText = newTrimmed.substring(oldTrimmed.length).trim();
         if (addedText.length > 0 && /^[\s\w]/.test(addedText)) {
-            return {
+            const result = {
                 isProgressive: true, 
                 confidence: 'VERY_HIGH', 
                 pattern: `Exact prefix expansion: adds "${addedText}"`
             };
+            logProgressiveAnalysis(oldText, newText, result);
+            return result;
         }
     }
     
-    // Pattern 2: Punctuation completion (HIGH confidence)
-    const punctuationRegex = /[.!?;,][\s]*$/;
+    // Pattern 2a: Simple punctuation addition (HIGH confidence) - for cases like "I" -> "I."
+    const punctuationRegex = /[.!?;,]$/;
+    if (oldTrimmed.length <= 10 && !punctuationRegex.test(oldTrimmed) && punctuationRegex.test(newTrimmed)) {
+        const oldWithoutPunct = oldTrimmed;
+        const newWithoutPunct = newTrimmed.replace(/[.!?;,]+$/, '').trim();
+        if (oldWithoutPunct === newWithoutPunct) {
+            const result = {
+                isProgressive: true,
+                confidence: 'HIGH',
+                pattern: `Simple punctuation addition`
+            };
+            logProgressiveAnalysis(oldText, newText, result);
+            return result;
+        }
+    }
+    
+    // Pattern 2b: Punctuation completion (HIGH confidence)
     if (!punctuationRegex.test(oldTrimmed) && punctuationRegex.test(newTrimmed)) {
-        const oldWithoutPunct = oldTrimmed.replace(/[.!?;,\s]+$/, '').trim();
-        const newWithoutPunct = newTrimmed.replace(/[.!?;,\s]+$/, '').trim();
+        const oldWithoutPunct = normalizeTextForComparison(oldTrimmed.replace(/[.!?;,]+$/, ''));
+        const newWithoutPunct = normalizeTextForComparison(newTrimmed.replace(/[.!?;,]+$/, ''));
         if (oldWithoutPunct === newWithoutPunct || newWithoutPunct.startsWith(oldWithoutPunct)) {
-            return {
+            const result = {
                 isProgressive: true,
                 confidence: 'HIGH',
                 pattern: `Punctuation completion`
             };
+            logProgressiveAnalysis(oldText, newText, result);
+            return result;
         }
     }
     
     // Pattern 3: Capitalization fix (HIGH confidence)
     if (oldTrimmed.toLowerCase() === newTrimmed.toLowerCase() && oldTrimmed !== newTrimmed) {
-        return {
+        const result = {
             isProgressive: true,
             confidence: 'HIGH', 
             pattern: `Capitalization fix`
         };
+        logProgressiveAnalysis(oldText, newText, result);
+        return result;
     }
     
-    // Pattern 4: Word-by-word building (HIGH confidence)
+    // Pattern 4: Incomplete word completion (HIGH confidence)
+    // Handles cases like "Capt" -> "caption capture"
+    if (oldTrimmed.length >= 3 && newTrimmed.length > oldTrimmed.length) {
+        const oldWords = oldTrimmed.split(/\s+/);
+        const newWords = newTrimmed.split(/\s+/);
+        
+        // Check if old text ends with an incomplete word that gets completed
+        if (oldWords.length > 0 && newWords.length >= oldWords.length) {
+            const lastOldWord = oldWords[oldWords.length - 1];
+            const correspondingNewWord = newWords[oldWords.length - 1];
+            
+            // Check if the last word in old text is a prefix of the word in new text
+            if (lastOldWord.length >= 3 && 
+                correspondingNewWord && 
+                correspondingNewWord.toLowerCase().startsWith(lastOldWord.toLowerCase()) &&
+                correspondingNewWord.length > lastOldWord.length) {
+                
+                // Verify the rest of the old text matches
+                const oldPrefix = oldWords.slice(0, -1).join(' ');
+                const newPrefix = newWords.slice(0, oldWords.length - 1).join(' ');
+                
+                if (oldPrefix === newPrefix || oldWords.length === 1) {
+                    const result = {
+                        isProgressive: true,
+                        confidence: 'HIGH',
+                        pattern: `Incomplete word completion: "${lastOldWord}" -> "${correspondingNewWord}"`
+                    };
+                    logProgressiveAnalysis(oldText, newText, result);
+                    return result;
+                }
+            }
+        }
+    }
+    
+    // Pattern 5: Sentence continuation (MEDIUM confidence)
+    // Handles cases like "so yeah" -> "so yeah, let me see"
+    if (oldTrimmed.length >= 5 && newTrimmed.length > oldTrimmed.length) {
+        // Check if old text ends without proper sentence ending
+        const endsWithoutPunctuation = !/[.!?]$/.test(oldTrimmed);
+        const newHasContinuation = newTrimmed.startsWith(oldTrimmed);
+        
+        if (endsWithoutPunctuation && newHasContinuation) {
+            const continuation = newTrimmed.substring(oldTrimmed.length).trim();
+            const continuationWords = continuation.split(/\s+/).filter(w => w.length > 0);
+            
+            // Check for common continuation patterns (focused on most common words)
+            const startsWithContinuationWord = /^[,\s]*(and|but|so|then|let|maybe|I|we|you|they|he|she|it|the|a|an|to|for|of|in|on|at|with|by|from|up|out|if|when|where|what|how|why|who|which|that|this|there|here|now|just|only|also|even|still|yet|already|again|ok|okay|sure|actually|really|very|quite|pretty|rather|basically|well|right|good|bad|yes|no|like|want|need|have|get|give|take|put|make|do|go|come|see|know|think|say|tell|ask|feel|look|work|play|help|use|find|try|keep|show|start|begin|end|finish|continue|stop|leave|stay|move|turn|open|close|break|fix|clean|wash|cook|eat|drink|sleep|sit|stand|walk|run|drive|fly|swim|read|write|listen|hear|watch|learn|teach|understand|remember|forget|hope|wish|dream|believe|trust|worry|fear|care|matter|happen|change|live|die|love|hate|buy|sell|pay|cost|save|spend|win|lose|choose|decide|plan|build|create|develop|produce|provide|serve|send|receive|meet|include|support|follow|lead|control|manage|consider|discuss|explain|describe|compare|identify|encourage|suggest|require|expect|achieve|reach|accept|deal|argue|relate|involve|contain|exist|result|cause|appear|seem|become|remain|increase|decrease|improve|reduce|grow|shrink|expand|contract|rise|fall|climb|drop|push|pull|carry|hold|pick|cut|lock|unlock|throw|catch|hit|kick|touch|smell|taste|dance|sing|talk|speak|call|shout|whisper|laugh|cry|smile|frown|nod|shake|wave|point|grab|reach|stretch|bend|kneel|crawl|jump|skip|hop|march|jog|sprint|trot|gallop|slide|roll|spin|twist|turn|flip|fall|stumble|trip|slip|balance|lean|rest|relax|enjoy|celebrate|party|joke|tease|mock|praise|compliment|thank|apologize|forgive|excuse|blame|accuse|defend|protect|attack|fight|argue|discuss|debate|negotiate|compromise|agree|disagree|accept|reject|approve|disapprove|support|oppose|encourage|discourage|motivate|inspire|influence|persuade|convince|force|pressure|threaten|warn|advise|recommend|suggest|propose|offer|invite|welcome|greet|introduce|present|announce|declare|proclaim|state|claim|assert|insist|maintain|contend|dispute|challenge|question|doubt|wonder|suspect|assume|suppose|guess|estimate|calculate|measure|count|weigh|compare|contrast|match|fit|suit|belong|own|possess|contain|hold|include|comprise|consist|involve|concern|relate|connect|link|join|unite|combine|merge|mix|blend|separate|divide|split|share|distribute|spread|scatter|gather|collect|accumulate|store|save|keep|preserve|maintain|protect|defend|guard|secure|lock|unlock|open|close|shut|cover|uncover|hide|show|reveal|expose|display|present|exhibit|demonstrate|perform|act|play|dance|sing|music|art|paint|draw|write|read|study|learn|teach|educate|train|practice|exercise|work|job|career|profession|business|company|organization|institution|school|university|college|hospital|church|government|politics|law|legal|court|judge|jury|lawyer|attorney|doctor|nurse|teacher|student|child|adult|parent|family|friend)/.test(continuation);
+            
+            if (startsWithContinuationWord && continuationWords.length >= 1 && continuationWords.length <= 5) {
+                const result = {
+                    isProgressive: true,
+                    confidence: 'MEDIUM',
+                    pattern: `Sentence continuation: added "${continuation}"`
+                };
+                logProgressiveAnalysis(oldText, newText, result);
+                return result;
+            }
+        }
+    }
+    
+    // Pattern 6: Word-by-word building (HIGH confidence)
     // New text adds 1-3 complete words to the end
     if (newTrimmed.startsWith(oldTrimmed)) {
         const addedPart = newTrimmed.substring(oldTrimmed.length).trim();
@@ -300,17 +828,21 @@ function isWhitelistedProgressive(oldText, newText) {
             // Ensure it's adding real words, not just characters
             const hasRealWords = addedWords.every(word => word.length >= 2 && /^[a-zA-Z]/.test(word));
             if (hasRealWords) {
-                return {
+                const result = {
                     isProgressive: true,
                     confidence: 'HIGH',
                     pattern: `Word building: added "${addedWords.join(' ')}"`
                 };
+                logProgressiveAnalysis(oldText, newText, result);
+                return result;
             }
         }
     }
     
     // No whitelisted pattern matched
-    return {isProgressive: false, confidence: 'NONE', pattern: 'No safe pattern detected'};
+    const result = {isProgressive: false, confidence: 'NONE', pattern: 'No safe pattern detected'};
+    logProgressiveAnalysis(oldText, newText, result);
+    return result;
 }
 
 /**
@@ -389,38 +921,49 @@ function isExactCaptionDuplicate(name, text) {
 }
 
 /**
- * Handle progressive caption detection and removal
+ * Handle progressive caption detection and removal with multi-entry checking
  * @param {string} name - Speaker name
  * @param {string} text - Caption text
  * @returns {boolean} True if progressive caption was handled
  */
 function handleProgressiveCaption(name, text) {
-    for (let i = transcriptArray.length - 1; i >= Math.max(0, transcriptArray.length - PROGRESSIVE_CHECK_LOOKBACK); i--) {
+    let removedAny = false;
+    let checkedEntries = 0;
+    const maxChecks = 3; // Check up to 3 recent entries from same speaker
+    
+    for (let i = transcriptArray.length - 1; i >= Math.max(0, transcriptArray.length - PROGRESSIVE_CHECK_LOOKBACK) && checkedEntries < maxChecks; i--) {
         const entry = transcriptArray[i];
         
         if (entry.Name === name) {
+            checkedEntries++;
             const progressiveCheck = isWhitelistedProgressive(entry.Text, text);
             
             if (progressiveCheck.isProgressive) {
                 console.log(`  🔍 Whitelist match: ${progressiveCheck.pattern}`);
                 console.log(`  📊 Confidence: ${progressiveCheck.confidence}`);
                 
-                // Only proceed with removal for HIGH or VERY_HIGH confidence
-                if (progressiveCheck.confidence === 'HIGH' || progressiveCheck.confidence === 'VERY_HIGH') {
+                // Accept MEDIUM confidence for very recent entries (last 2), HIGH+ for older
+                const isVeryRecent = checkedEntries <= 2;
+                const confidenceThreshold = isVeryRecent ? 
+                    ['HIGH', 'VERY_HIGH', 'MEDIUM'] : 
+                    ['HIGH', 'VERY_HIGH'];
+                
+                if (confidenceThreshold.includes(progressiveCheck.confidence)) {
                     const removed = safelyRemoveEntry(i, progressiveCheck.pattern);
                     if (removed) {
-                        return true; // Found and handled progressive caption
+                        removedAny = true;
+                        // Continue checking for chain of progressive updates
+                        // but adjust indices since we removed an entry
+                        i++; // Compensate for the removed entry
                     }
                 } else {
                     console.log(`  ⚠️  Confidence too low for removal: ${progressiveCheck.confidence}`);
                 }
             }
-            
-            break; // Only check the most recent entry from this speaker
         }
     }
     
-    return false;
+    return removedAny;
 }
 
 /**
@@ -594,7 +1137,7 @@ function safeDOMQuery(container, selectors) {
 }
 
 /**
- * Main caption checking function with race condition protection and enhanced error handling
+ * Main caption checking function with hybrid snapshot/progressive approach
  */
 function checkCaptions() {
     // Prevent concurrent execution
@@ -610,9 +1153,10 @@ function checkCaptions() {
         
         checkForNewMeeting();
         
-        // Try multiple selectors for better compatibility
+        // Check if captions are available
         const captionContainerSelectors = [
-            "[data-tid='closed-captions-renderer']",
+            "[data-tid='closed-caption-renderer-wrapper']", // Teams v2 structure
+            "[data-tid='closed-captions-renderer']",         // Legacy structure
             ".closed-captions-container",
             "[data-testid='caption-container']"
         ];
@@ -623,61 +1167,82 @@ function checkCaptions() {
             return;
         }
         
-        // Try multiple selectors for caption elements
-        const captionSelectors = [
-            '.fui-ChatMessageCompact',
-            '.caption-item',
-            '[data-tid="caption-text"]'
-        ];
-        
-        let transcripts = [];
-        for (const selector of captionSelectors) {
-            transcripts = closedCaptionsContainer.querySelectorAll(selector);
-            if (transcripts.length > 0) break;
+        // Determine processing mode based on current capture mode
+        if (captionManager.captureMode === 'snapshot') {
+            // Snapshot mode - let the snapshot monitoring handle it
+            Logger.debug("Using snapshot mode for caption processing");
+            // The snapshot monitoring system will handle caption capture
+            // This function just ensures captions are available
+            
+        } else {
+            // Fallback mode - use progressive detection approach
+            Logger.debug("Using progressive fallback mode for caption processing");
+            processWithProgressiveDetection(closedCaptionsContainer);
         }
-        
-        Logger.debug(`Found ${transcripts.length} caption elements`);
-        
-        if (transcripts.length === 0) {
-            Logger.debug("No caption elements found");
-            return;
-        }
-        
-        // Process each visible caption element
-        transcripts.forEach((transcript, index) => {
-            try {
-                // Try multiple selectors for author element
-                const authorSelectors = ['[data-tid="author"]', '.author', '.speaker'];
-                const authorElement = safeDOMQuery(transcript, authorSelectors);
-                if (!authorElement) return;
-                
-                const Name = authorElement.innerText?.trim();
-                if (!Name) return;
-                
-                // Try multiple selectors for text element
-                const textSelectors = ['[data-tid="closed-caption-text"]', '.caption-text', '.text'];
-                const textElement = safeDOMQuery(transcript, textSelectors);
-                if (!textElement) return;
-                
-                const Text = textElement.innerText?.trim();
-                if (!Text || Text.length === 0) return;
-                
-                // Use conservative whitelist approach
-                conservativeSmartAddCaption(Name, Text);
-                
-            } catch (error) {
-                Logger.error(`Error processing transcript ${index}:`, error);
-            }
-        });
-        
-        Logger.debug(`Current transcript array length: ${transcriptArray.length}`);
         
     } catch (error) {
         Logger.error('Error in checkCaptions:', error);
+        // On error, switch to fallback mode for safety
+        captionManager.switchToFallbackMode('checkCaptions error');
     } finally {
         // Always reset processing flag
         isProcessing = false;
     }
+}
+
+/**
+ * Process captions using progressive detection (fallback mode)
+ * @param {Element} closedCaptionsContainer - Container element with captions
+ */
+function processWithProgressiveDetection(closedCaptionsContainer) {
+    // Try multiple selectors for caption elements
+    const captionSelectors = [
+        '.fui-ChatMessageCompact',
+        '.caption-item',
+        '[data-tid="caption-text"]'
+    ];
+    
+    let transcripts = [];
+    for (const selector of captionSelectors) {
+        transcripts = closedCaptionsContainer.querySelectorAll(selector);
+        if (transcripts.length > 0) break;
+    }
+    
+    Logger.debug(`Found ${transcripts.length} caption elements in progressive mode`);
+    
+    if (transcripts.length === 0) {
+        Logger.debug("No caption elements found");
+        return;
+    }
+    
+    // Process each visible caption element using progressive detection
+    transcripts.forEach((transcript, index) => {
+        try {
+            // Try multiple selectors for author element
+            const authorSelectors = ['[data-tid="author"]', '.author', '.speaker'];
+            const authorElement = safeDOMQuery(transcript, authorSelectors);
+            if (!authorElement) return;
+            
+            const Name = authorElement.innerText?.trim();
+            if (!Name) return;
+            
+            // Try multiple selectors for text element
+            const textSelectors = ['[data-tid="closed-caption-text"]', '.caption-text', '.text'];
+            const textElement = safeDOMQuery(transcript, textSelectors);
+            if (!textElement) return;
+            
+            const Text = textElement.innerText?.trim();
+            if (!Text || Text.length === 0) return;
+            
+            // Use conservative whitelist approach for progressive detection
+            conservativeSmartAddCaption(Name, Text);
+            
+        } catch (error) {
+            Logger.error(`Error processing transcript ${index}:`, error);
+        }
+    });
+    
+    Logger.debug(`Current transcript array length: ${transcriptArray.length}`);
 }
 
 // run startTranscription every 5 seconds
@@ -703,7 +1268,13 @@ function startTranscription() {
 
         console.log("✅ Meeting detected");
 
-        const closedCaptionsContainer = document.querySelector("[data-tid='closed-captions-renderer']");
+        // Try multiple selectors for Teams v2 compatibility
+        const captionContainerSelectors = [
+            "[data-tid='closed-caption-renderer-wrapper']", // Teams v2 structure
+            "[data-tid='closed-captions-renderer']"         // Legacy structure
+        ];
+        
+        const closedCaptionsContainer = safeDOMQuery(document, captionContainerSelectors);
         if (!closedCaptionsContainer) {
             console.log("❌ Caption container not found - Please enable captions: More > Language and speech > Turn on live captions");
             setTimeout(startTranscription, 5000);
@@ -729,10 +1300,17 @@ function startTranscription() {
         // Add cleanup function
         cleanupFunctions.push(() => cleanupObserver());
         
+        // Start the hybrid capture system
+        if (captionManager.captureMode === 'snapshot') {
+            console.log("🚀 Starting hybrid snapshot-based caption capture...");
+            captionManager.startSnapshotMonitoring();
+        } else {
+            console.log("🚀 Starting progressive fallback caption capture...");
+        }
+        
         // Do an initial check
-        console.log("🚀 Starting conservative smart caption capture...");
         checkCaptions();
-        console.log("Caption capturing started successfully for meeting:", currentMeetingId);
+        console.log(`Caption capturing started successfully for meeting: ${currentMeetingId} (Mode: ${captionManager.captureMode})`);
 
         return true;
     } catch (error) {
@@ -868,6 +1446,10 @@ function cleanupObserver() {
         debounceTimer = null;
         console.log("🧹 Debounce timer cleaned up");
     }
+    
+    // Clean up snapshot monitoring
+    captionManager.stopSnapshotMonitoring();
+    console.log("🧹 Snapshot monitoring cleaned up");
     
     capturing = false;
     isProcessing = false;
@@ -1352,7 +1934,11 @@ function ensureObserverReliability() {
         
         // Also check if DOM container still exists
         if (capturing && observer) {
-            const container = document.querySelector("[data-tid='closed-captions-renderer']");
+            const captionContainerSelectors = [
+                "[data-tid='closed-caption-renderer-wrapper']", // Teams v2 structure
+                "[data-tid='closed-captions-renderer']"         // Legacy structure
+            ];
+            const container = safeDOMQuery(document, captionContainerSelectors);
             if (!container) {
                 Logger.warn('Caption container lost - observer may be orphaned');
                 cleanupObserver();
@@ -1362,7 +1948,11 @@ function ensureObserverReliability() {
         
         // CRITICAL: Check if captions have stopped flowing for too long
         const timeSinceLastCaption = Date.now() - captionManager.lastCaptionTime;
-        const captionElements = document.querySelectorAll("[data-tid='closed-captions-renderer'] .fui-ChatMessageCompact");
+        // Check for caption elements in both v2 and legacy structures
+        const captionElements = document.querySelectorAll(
+            "[data-tid='closed-caption-renderer-wrapper'] .fui-ChatMessageCompact, " +
+            "[data-tid='closed-captions-renderer'] .fui-ChatMessageCompact"
+        );
         
         // If we haven't captured captions in 5 minutes but DOM shows captions exist, restart
         if (capturing && timeSinceLastCaption > 5 * 60 * 1000 && captionElements.length > 0) {
@@ -1397,7 +1987,10 @@ function performHealthCheck() {
                 captureRate: captionManager.captionCount,
                 timeSinceLastCaption: Date.now() - captionManager.lastCaptionTime,
                 observerActive: !!observer,
-                containerExists: !!document.querySelector("[data-tid='closed-captions-renderer']")
+                containerExists: !!(safeDOMQuery(document, [
+                    "[data-tid='closed-caption-renderer-wrapper']",
+                    "[data-tid='closed-captions-renderer']"
+                ]))
             };
             
             Logger.debug('Health Check:', stats);
