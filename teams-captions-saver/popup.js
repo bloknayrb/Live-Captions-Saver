@@ -5,13 +5,21 @@ document.addEventListener('DOMContentLoaded', function () {
     document.getElementById('saveButton').addEventListener('click', function () {
         console.log('save_captions clicked!');
         
-        // Get active tab and send message
+        // Get active tab and send message with retry logic
         chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+            if (!tabs || tabs.length === 0) {
+                console.warn('No active tab found');
+                return;
+            }
+            
             chrome.tabs.sendMessage(tabs[0].id, {message: "return_transcript"}, function(response) {
                 if (chrome.runtime.lastError) {
-                    console.error('Error sending save message:', chrome.runtime.lastError);
+                    // Only log if it's not a common timing issue
+                    if (!chrome.runtime.lastError.message.includes('receiving end does not exist')) {
+                        console.warn('Save message communication issue:', chrome.runtime.lastError.message);
+                    }
                 } else if (response && !response.success) {
-                    console.error('Save failed:', response.error);
+                    console.warn('Save operation failed:', response.error);
                 }
             });
         });
@@ -20,13 +28,21 @@ document.addEventListener('DOMContentLoaded', function () {
     document.getElementById('viewButton').addEventListener('click', function () {
         console.log('view_captions clicked!');
         
-        // Get active tab and send message
+        // Get active tab and send message with retry logic
         chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+            if (!tabs || tabs.length === 0) {
+                console.warn('No active tab found');
+                return;
+            }
+            
             chrome.tabs.sendMessage(tabs[0].id, {message: "get_captions_for_viewing"}, function(response) {
                 if (chrome.runtime.lastError) {
-                    console.error('Error sending view message:', chrome.runtime.lastError);
+                    // Only log if it's not a common timing issue
+                    if (!chrome.runtime.lastError.message.includes('receiving end does not exist')) {
+                        console.warn('View message communication issue:', chrome.runtime.lastError.message);
+                    }
                 } else if (response && !response.success) {
-                    console.error('View failed:', response.error);
+                    console.warn('View operation failed:', response.error);
                 }
             });
         });
@@ -37,11 +53,19 @@ document.addEventListener('DOMContentLoaded', function () {
         
         // Confirm before resetting
         if (confirm('Are you sure you want to clear all captured transcript data? This cannot be undone.')) {
-            // Get active tab and send message
+            // Get active tab and send message with retry logic
             chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+                if (!tabs || tabs.length === 0) {
+                    console.warn('No active tab found');
+                    return;
+                }
+                
                 chrome.tabs.sendMessage(tabs[0].id, {message: "reset_transcript"}, function(response) {
                     if (chrome.runtime.lastError) {
-                        console.error('Error sending reset message:', chrome.runtime.lastError);
+                        // Only log if it's not a common timing issue
+                        if (!chrome.runtime.lastError.message.includes('receiving end does not exist')) {
+                            console.warn('Reset message communication issue:', chrome.runtime.lastError.message);
+                        }
                     } else if (response && response.success) {
                         console.log('Transcript reset successfully');
                     }

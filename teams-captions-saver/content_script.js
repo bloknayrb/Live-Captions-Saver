@@ -25,11 +25,6 @@ class CaptionManager {
         // Reliability tracking
         this.lastCaptionTime = Date.now();
         this.captionCount = 0;
-        
-        // Bind methods to preserve context
-        this.debouncedCheckCaptions = this.debouncedCheckCaptions.bind(this);
-        this.checkCaptions = this.checkCaptions.bind(this);
-        this.cleanup = this.cleanup.bind(this);
     }
     
     /**
