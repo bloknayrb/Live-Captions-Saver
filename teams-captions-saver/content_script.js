@@ -1,3 +1,21 @@
+// Meeting state constants
+const MEETING_STATES = {
+    CHAT: 'chat',                    // In Teams chat/general interface
+    JOINING: 'joining',              // Meeting join process started
+    PRE_MEETING: 'pre_meeting',      // In meeting lobby/waiting
+    MEETING_ACTIVE: 'meeting_active', // In active meeting
+    CAPTIONS_READY: 'captions_ready' // Captions container available
+};
+
+// Transition timeout constants
+const TRANSITION_TIMEOUTS = {
+    CHAT_TO_JOINING: 5000,           // 5 seconds
+    JOINING_TO_PRE_MEETING: 15000,   // 15 seconds  
+    PRE_MEETING_TO_ACTIVE: 30000,    // 30 seconds
+    ACTIVE_TO_CAPTIONS_READY: 45000, // 45 seconds
+    GRACE_PERIOD: 60000              // 1 minute grace period after any transition
+};
+
 /**
  * CaptionManager class - Encapsulates all caption capture state and operations
  */
@@ -12,6 +30,13 @@ class CaptionManager {
         // Meeting management
         this.currentMeetingId = null;
         this.lastMeetingCheck = 0;
+        
+        // NEW: Transition state management
+        this.meetingState = MEETING_STATES.CHAT;
+        this.previousMeetingState = MEETING_STATES.CHAT;
+        this.stateTransitionTime = Date.now();
+        this.transitionGracePeriod = TRANSITION_TIMEOUTS.GRACE_PERIOD;
+        this.stateTransitionHistory = [];
         
         // Race condition prevention
         this.debounceTimer = null;
@@ -35,6 +60,533 @@ class CaptionManager {
         this.pendingCaptionData = [];
         this.fallbackModeStartTime = null;
         this.snapshotFailureCount = 0;
+        
+        // Debug mode for comprehensive logging
+        this.debugMode = new URLSearchParams(window.location.search).has('debug') || 
+                        localStorage.getItem('caption_saver_debug') === 'true';
+    }
+    
+    /**
+     * Transition to new meeting state with logging and history tracking
+     * @param {string} newState - New meeting state to transition to
+     * @param {string} reason - Reason for the transition
+     */
+    transitionToState(newState, reason = 'Unknown') {
+        // Validate state parameter
+        if (!Object.values(MEETING_STATES).includes(newState)) {
+            Logger.error(`Invalid state transition requested: ${newState}`);
+            return;
+        }
+        
+        if (this.meetingState === newState) {
+            return; // Already in target state
+        }
+        
+        const oldState = this.meetingState;
+        this.previousMeetingState = oldState;
+        this.meetingState = newState;
+        this.stateTransitionTime = Date.now();
+        
+        // Track transition history
+        this.stateTransitionHistory.push({
+            from: oldState,
+            to: newState,
+            timestamp: this.stateTransitionTime,
+            reason: reason
+        });
+        
+        // Keep only last 10 transitions
+        if (this.stateTransitionHistory.length > 10) {
+            this.stateTransitionHistory.shift();
+        }
+        
+        Logger.info(`Meeting state transition: ${oldState} → ${newState} (${reason})`);
+        
+        // Enhanced debug logging
+        if (this.debugMode) {
+            Logger.debug(`State transition details:`, {
+                fromState: oldState,
+                toState: newState,
+                reason: reason,
+                timestamp: new Date(this.stateTransitionTime).toISOString(),
+                transitionCount: this.stateTransitionHistory.length,
+                meetingId: this.currentMeetingId,
+                captionCount: this.transcriptArray.length,
+                capturing: this.capturing,
+                url: window.location.href
+            });
+        }
+        
+        // Show user transition progress
+        showStateTransitionProgress(oldState, newState);
+        
+        // Call transition-specific handlers
+        this.onStateTransition(oldState, newState, reason);
+    }
+    
+    /**
+     * Handle actions needed when transitioning between states
+     * @param {string} fromState - Previous state
+     * @param {string} toState - New state
+     * @param {string} reason - Reason for transition
+     */
+    onStateTransition(fromState, toState, reason) {
+        // Log transition for debugging
+        Logger.debug(`Handling transition from ${fromState} to ${toState}: ${reason}`);
+        
+        // State-specific transition logic
+        switch (toState) {
+            case MEETING_STATES.JOINING:
+                this.onJoiningMeeting();
+                break;
+            case MEETING_STATES.PRE_MEETING:
+                this.onPreMeeting();
+                break;
+            case MEETING_STATES.MEETING_ACTIVE:
+                this.onMeetingActive();
+                break;
+            case MEETING_STATES.CAPTIONS_READY:
+                this.onCaptionsReady();
+                break;
+            case MEETING_STATES.CHAT:
+                this.onReturnToChat();
+                break;
+        }
+    }
+    
+    /**
+     * Check if we're currently in a transition grace period
+     * @returns {boolean} True if in grace period
+     */
+    isInTransitionGracePeriod() {
+        const timeSinceTransition = Date.now() - this.stateTransitionTime;
+        return timeSinceTransition < this.transitionGracePeriod;
+    }
+    
+    /**
+     * Get time since last state transition
+     * @returns {number} Milliseconds since last transition
+     */
+    getTimeSinceTransition() {
+        return Date.now() - this.stateTransitionTime;
+    }
+    
+    /**
+     * Check if state transition has timed out
+     * @returns {boolean} True if transition has taken too long
+     */
+    isTransitionTimedOut() {
+        const timeSinceTransition = this.getTimeSinceTransition();
+        
+        switch (this.meetingState) {
+            case MEETING_STATES.JOINING:
+                return timeSinceTransition > TRANSITION_TIMEOUTS.CHAT_TO_JOINING;
+            case MEETING_STATES.PRE_MEETING:
+                return timeSinceTransition > TRANSITION_TIMEOUTS.JOINING_TO_PRE_MEETING;
+            case MEETING_STATES.MEETING_ACTIVE:
+                return timeSinceTransition > TRANSITION_TIMEOUTS.PRE_MEETING_TO_ACTIVE;
+            case MEETING_STATES.CAPTIONS_READY:
+                return timeSinceTransition > TRANSITION_TIMEOUTS.ACTIVE_TO_CAPTIONS_READY;
+            default:
+                return false;
+        }
+    }
+    
+    /**
+     * Handle joining meeting state
+     */
+    onJoiningMeeting() {
+        Logger.info('Joining meeting - preparing caption capture system');
+        // Prepare for meeting without starting capture yet
+    }
+    
+    /**
+     * Handle pre-meeting state (lobby/waiting)
+     */
+    onPreMeeting() {
+        Logger.info('In pre-meeting state - monitoring for meeting start');
+        // Monitor for meeting to become active
+    }
+    
+    /**
+     * Handle meeting active state
+     */
+    onMeetingActive() {
+        Logger.info('Meeting is now active - looking for caption containers');
+        // Start looking for caption containers with progressive detection
+        this.startCaptionContainerSearch();
+    }
+    
+    /**
+     * Start searching for caption containers with progressive detection
+     */
+    async startCaptionContainerSearch() {
+        try {
+            Logger.info('Starting caption container search...');
+            
+            // Use progressive container detection
+            const container = await this.findCaptionContainerProgressive();
+            
+            if (container) {
+                Logger.info('Caption container detected - transitioning to captions ready');
+                this.transitionToState(MEETING_STATES.CAPTIONS_READY, 'Caption container found');
+            } else {
+                Logger.warn('No caption container found - captions may not be enabled');
+                // Stay in meeting active state and continue monitoring
+                
+                // Schedule another search in case captions get enabled later
+                setTimeout(() => {
+                    if (this.meetingState === MEETING_STATES.MEETING_ACTIVE) {
+                        Logger.info('Retrying caption container search...');
+                        this.startCaptionContainerSearch();
+                    }
+                }, 15000); // Retry every 15 seconds
+            }
+            
+        } catch (error) {
+            Logger.error('Error in caption container search:', error);
+        }
+    }
+    
+    /**
+     * Handle captions ready state
+     */
+    onCaptionsReady() {
+        Logger.info('Captions are ready - starting caption capture');
+        // Begin actual caption capture
+    }
+    
+    /**
+     * Handle return to chat state
+     */
+    onReturnToChat() {
+        Logger.info('Returned to chat - stopping caption capture');
+        // Clean up capture resources
+        this.cleanupCaptureResources();
+    }
+    
+    /**
+     * Check if observer is healthy and functioning
+     * @returns {boolean} True if observer is healthy
+     */
+    checkObserverHealth() {
+        if (!this.observer) {
+            Logger.debug('Observer health check: No observer exists');
+            return false;
+        }
+        
+        try {
+            // Check if observer is still connected and functional
+            if (!this.observer.takeRecords) {
+                Logger.debug('Observer health check: Observer missing takeRecords method');
+                return false;
+            }
+            
+            // Check if observer target still exists in DOM
+            const currentContainer = safeDOMQuery(document, [
+                "[data-tid='closed-caption-renderer-wrapper']",
+                "[data-tid='closed-captions-renderer']"
+            ]);
+            
+            if (!currentContainer) {
+                Logger.debug('Observer health check: Caption container no longer exists');
+                return false;
+            }
+            
+            // Check if observer is still observing the correct target
+            // Note: We can't directly check observer.target, so we assume it's correct if container exists
+            Logger.debug('Observer health check: Observer appears healthy');
+            return true;
+            
+        } catch (error) {
+            Logger.warn('Observer health check failed:', error);
+            return false;
+        }
+    }
+    
+    /**
+     * Smart observer re-targeting instead of full recreation
+     * @returns {boolean} True if re-targeting succeeded
+     */
+    retargetObserver() {
+        if (!this.observer) {
+            Logger.debug('Cannot retarget observer - no observer exists');
+            return false;
+        }
+        
+        try {
+            // Find new caption container
+            const newContainer = safeDOMQuery(document, [
+                "[data-tid='closed-caption-renderer-wrapper']",
+                "[data-tid='closed-captions-renderer']"
+            ]);
+            
+            if (!newContainer) {
+                Logger.debug('Cannot retarget observer - no caption container found');
+                return false;
+            }
+            
+            // Disconnect from old target and reconnect to new target
+            this.observer.disconnect();
+            this.observer.observe(newContainer, {
+                childList: true,
+                subtree: true,
+                characterData: true
+            });
+            
+            Logger.info('Observer successfully retargeted to new container');
+            return true;
+            
+        } catch (error) {
+            Logger.error('Observer retargeting failed:', error);
+            return false;
+        }
+    }
+    
+    /**
+     * Ensure observer is running and healthy
+     * @returns {boolean} True if observer is ready
+     */
+    ensureObserverHealth() {
+        // Check if observer exists and is healthy
+        if (this.checkObserverHealth()) {
+            Logger.debug('Observer is healthy - no action needed');
+            return true;
+        }
+        
+        // Try to retarget observer if it exists but is unhealthy
+        if (this.observer && this.retargetObserver()) {
+            Logger.info('Observer retargeted successfully');
+            return true;
+        }
+        
+        // Observer needs to be recreated
+        Logger.info('Observer needs recreation');
+        return this.recreateObserver();
+    }
+    
+    /**
+     * Recreate observer as last resort
+     * @returns {boolean} True if recreation succeeded
+     */
+    recreateObserver() {
+        try {
+            // Clean up existing observer
+            if (this.observer) {
+                this.observer.disconnect();
+                this.observer = null;
+            }
+            
+            // Find caption container
+            const container = safeDOMQuery(document, [
+                "[data-tid='closed-caption-renderer-wrapper']",
+                "[data-tid='closed-captions-renderer']"
+            ]);
+            
+            if (!container) {
+                Logger.debug('Cannot recreate observer - no caption container found');
+                return false;
+            }
+            
+            // Create new observer
+            this.observer = new MutationObserver(debouncedCheckCaptions);
+            this.observer.observe(container, {
+                childList: true,
+                subtree: true,
+                characterData: true
+            });
+            
+            Logger.info('Observer recreated successfully');
+            return true;
+            
+        } catch (error) {
+            Logger.error('Observer recreation failed:', error);
+            return false;
+        }
+    }
+    
+    /**
+     * Clean up capture resources
+     */
+    cleanupCaptureResources() {
+        // Stop snapshot monitoring
+        this.stopSnapshotMonitoring();
+        
+        // Clean up observer
+        if (this.observer) {
+            this.observer.disconnect();
+            this.observer = null;
+        }
+        
+        // Clean up timers
+        if (this.debounceTimer) {
+            clearTimeout(this.debounceTimer);
+            this.debounceTimer = null;
+        }
+        
+        // Reset capture state
+        this.capturing = false;
+        this.isProcessing = false;
+        
+        Logger.info('Capture resources cleaned up');
+    }
+    
+    /**
+     * Wait for caption container to appear and become ready
+     * @param {number} maxWaitTime - Maximum wait time in milliseconds
+     * @returns {Promise<Element|null>} Caption container element or null if timeout
+     */
+    async waitForCaptionContainer(maxWaitTime = 60000) {
+        const startTime = Date.now();
+        const checkInterval = 2000; // Check every 2 seconds
+        
+        return new Promise((resolve) => {
+            const checkForContainer = () => {
+                try {
+                    const container = safeDOMQuery(document, [
+                        "[data-tid='closed-caption-renderer-wrapper']",
+                        "[data-tid='closed-captions-renderer']",
+                        ".closed-captions-container",
+                        "[data-testid='caption-container']",
+                        ".live-captions-container"
+                    ]);
+                    
+                    if (container && this.isCaptionContainerReady(container)) {
+                        Logger.info('Caption container found and ready');
+                        resolve(container);
+                        return;
+                    }
+                    
+                    if (Date.now() - startTime > maxWaitTime) {
+                        Logger.warn(`Caption container wait timeout after ${maxWaitTime}ms`);
+                        resolve(null);
+                        return;
+                    }
+                    
+                    // Schedule next check
+                    setTimeout(checkForContainer, checkInterval);
+                    
+                } catch (error) {
+                    Logger.error('Error checking for caption container:', error);
+                    resolve(null);
+                }
+            };
+            
+            // Start checking
+            checkForContainer();
+        });
+    }
+    
+    /**
+     * Check if caption container is ready for observation
+     * @param {Element} container - Caption container element
+     * @returns {boolean} True if container is ready
+     */
+    isCaptionContainerReady(container) {
+        if (!container) return false;
+        
+        try {
+            // Check if container is visible
+            if (!container.offsetParent) {
+                Logger.debug('Caption container not visible');
+                return false;
+            }
+            
+            // Check if container has expected structure
+            const hasExpectedAttributes = container.hasAttribute('data-tid') || 
+                                        container.classList.length > 0;
+            
+            if (!hasExpectedAttributes) {
+                Logger.debug('Caption container missing expected attributes');
+                return false;
+            }
+            
+            // Check if container is not empty (indicates Teams has initialized it)
+            const hasContent = container.children.length > 0 || 
+                             container.textContent.trim().length > 0;
+            
+            // For caption containers, it's OK if they're empty initially
+            // but they should at least have the right structure
+            Logger.debug(`Caption container readiness check: visible=${!!container.offsetParent}, hasAttributes=${hasExpectedAttributes}, hasContent=${hasContent}`);
+            
+            return hasExpectedAttributes; // Don't require content for caption containers
+            
+        } catch (error) {
+            Logger.error('Error checking caption container readiness:', error);
+            return false;
+        }
+    }
+    
+    /**
+     * Progressive container detection with validation
+     * @returns {Promise<Element|null>} Found container or null
+     */
+    async findCaptionContainerProgressive() {
+        const containerSelectors = [
+            "[data-tid='closed-caption-renderer-wrapper']", // Primary Teams v2
+            "[data-tid='closed-captions-renderer']",         // Legacy Teams
+            ".closed-captions-container",                    // Generic selector
+            "[data-testid='caption-container']",             // Test environments
+            ".live-captions-container"                       // Alternative naming
+        ];
+        
+        Logger.debug('Starting progressive caption container detection');
+        
+        // Try each selector with increasing wait times
+        for (let i = 0; i < containerSelectors.length; i++) {
+            const selector = containerSelectors[i];
+            const waitTime = (i + 1) * 5000; // 5s, 10s, 15s, 20s, 25s
+            
+            try {
+                const container = await this.waitForSpecificContainer(selector, waitTime);
+                if (container) {
+                    Logger.info(`Caption container found using selector: ${selector}`);
+                    return container;
+                }
+            } catch (error) {
+                Logger.debug(`Container search failed for selector ${selector}:`, error);
+            }
+        }
+        
+        Logger.warn('Progressive container detection failed - no containers found');
+        return null;
+    }
+    
+    /**
+     * Wait for specific container selector
+     * @param {string} selector - CSS selector to wait for
+     * @param {number} maxWaitTime - Maximum wait time
+     * @returns {Promise<Element|null>} Found element or null
+     */
+    async waitForSpecificContainer(selector, maxWaitTime = 10000) {
+        const startTime = Date.now();
+        const checkInterval = 1000; // Check every second
+        
+        return new Promise((resolve) => {
+            const checkForElement = () => {
+                try {
+                    const element = document.querySelector(selector);
+                    
+                    if (element && this.isCaptionContainerReady(element)) {
+                        resolve(element);
+                        return;
+                    }
+                    
+                    if (Date.now() - startTime > maxWaitTime) {
+                        resolve(null);
+                        return;
+                    }
+                    
+                    setTimeout(checkForElement, checkInterval);
+                    
+                } catch (error) {
+                    Logger.debug(`Error checking for selector ${selector}:`, error);
+                    resolve(null);
+                }
+            };
+            
+            checkForElement();
+        });
     }
     
     /**
@@ -269,8 +821,9 @@ class CaptionManager {
                 }
             }
             
-            // Clear pending data
+            // Clear pending data and reset silence timer to prevent immediate reprocessing
             this.pendingCaptionData = [];
+            this.resetSilenceTimer(); // Reset timer to prevent immediate reprocessing
             
             Logger.info(`Batch processing complete: ${addedCount} new captions added`);
             
@@ -571,7 +1124,7 @@ function validateCaptionInput(name, text) {
 }
 
 /**
- * Extract meeting identifier for detecting meeting changes with enhanced error handling
+ * Enhanced meeting detection with multiple URL patterns
  */
 function extractMeetingId() {
     try {
@@ -581,14 +1134,32 @@ function extractMeetingId() {
             return null;
         }
         
-        const urlMatch = window.location.href.match(/meetup-join\/([^\/\?]+)/);
-        if (urlMatch && urlMatch[1]) {
-            return urlMatch[1];
+        const url = window.location.href;
+        
+        // Multiple URL patterns for different Teams meeting formats
+        const urlPatterns = [
+            /meetup-join\/([^\/\?]+)/,           // Standard meetup-join
+            /conversations\/([^\/\?]+)/,         // Conversation-based meetings
+            /calling\/([^\/\?]+)/,               // Direct calling
+            /l\/meetup-join\/([^\/\?]+)/,        // Link-based meetup
+            /meet\/([^\/\?]+)/,                  // Simple meet URLs
+            /m\/([^\/\?]+)/                      // Shortened URLs
+        ];
+        
+        for (const pattern of urlPatterns) {
+            const match = url.match(pattern);
+            if (match && match[1]) {
+                Logger.debug(`Meeting ID extracted using pattern: ${pattern}`);
+                return match[1];
+            }
         }
         
-        // Fallback to document title if available
+        // Fallback to document title if available - normalize title to avoid false positives
         if (document && document.title) {
-            const title = document.title.replace(/__Microsoft_Teams.*$/, '').trim();
+            const title = document.title
+                .replace(/__Microsoft_Teams.*$/, '')  // Remove Teams suffix
+                .replace(/^\(\d+\)\s*/, '')            // Remove notification counts like "(1) "
+                .trim();
             return title || null;
         }
         
@@ -600,32 +1171,284 @@ function extractMeetingId() {
 }
 
 /**
- * Check if we've moved to a new meeting and should reset transcript data
+ * Detect current meeting state based on DOM indicators
+ * @returns {string} Current meeting state
  */
-function checkForNewMeeting() {
+function detectMeetingState() {
+    try {
+        // Check for meeting join process indicators
+        if (hasJoinIndicators()) {
+            return MEETING_STATES.JOINING;
+        }
+        
+        // Check for pre-meeting state (lobby/waiting)
+        if (hasPreMeetingIndicators()) {
+            return MEETING_STATES.PRE_MEETING;
+        }
+        
+        // Check for active meeting indicators
+        if (hasActiveMeetingIndicators()) {
+            return MEETING_STATES.MEETING_ACTIVE;
+        }
+        
+        // Check for caption containers (meeting with captions ready)
+        if (hasCaptionContainers()) {
+            return MEETING_STATES.CAPTIONS_READY;
+        }
+        
+        // Default to chat state
+        return MEETING_STATES.CHAT;
+        
+    } catch (error) {
+        Logger.error('Error detecting meeting state:', error);
+        return MEETING_STATES.CHAT;
+    }
+}
+
+/**
+ * Check for meeting join process indicators
+ * @returns {boolean} True if joining meeting
+ */
+function hasJoinIndicators() {
+    const joinIndicators = [
+        // Join button or joining process
+        '[data-tid="prejoin-join-button"]',
+        '[data-tid="call-join-button"]',
+        '.join-meeting-button',
+        
+        // Loading states during join
+        '[data-tid="calling-join-sound"]',
+        '[data-tid="calling-connecting-sound"]',
+        '.joining-meeting-indicator',
+        
+        // Join meeting dialog
+        '[data-tid="prejoin-display-name-field"]',
+        '[data-tid="toggle-video"]',
+        '[data-tid="toggle-mute"]'
+    ];
+    
+    return joinIndicators.some(selector => {
+        try {
+            return document.querySelector(selector) !== null;
+        } catch (error) {
+            return false;
+        }
+    });
+}
+
+/**
+ * Check for pre-meeting state indicators (lobby/waiting)
+ * @returns {boolean} True if in pre-meeting state
+ */
+function hasPreMeetingIndicators() {
+    const preMeetingIndicators = [
+        // Waiting for host
+        '[data-tid="waiting-for-host"]',
+        '[data-tid="lobby-waiting-screen"]',
+        
+        // Waiting messages
+        'span:contains("Waiting for others to join")',
+        'span:contains("Waiting for the organizer")',
+        'span:contains("Please wait")',
+        
+        // Lobby interface
+        '[data-tid="lobby-screen"]',
+        '[data-tid="prejoin-screen"]',
+        '.lobby-container',
+        
+        // Test audio/video controls in lobby
+        '[data-tid="device-settings-microphone"]',
+        '[data-tid="device-settings-camera"]'
+    ];
+    
+    // Also check for specific text content
+    const waitingTexts = [
+        'Waiting for others to join',
+        'Waiting for the organizer',
+        'Please wait, the meeting will begin soon',
+        'You\'re in the lobby'
+    ];
+    
+    const hasIndicatorElements = preMeetingIndicators.some(selector => {
+        try {
+            return document.querySelector(selector) !== null;
+        } catch (error) {
+            return false;
+        }
+    });
+    
+    const hasWaitingText = waitingTexts.some(text => {
+        try {
+            return document.body.textContent.includes(text);
+        } catch (error) {
+            return false;
+        }
+    });
+    
+    return hasIndicatorElements || hasWaitingText;
+}
+
+/**
+ * Check for active meeting indicators
+ * @returns {boolean} True if meeting is active
+ */
+function hasActiveMeetingIndicators() {
+    const activeMeetingIndicators = [
+        // Call duration indicator
+        '[data-tid="call-duration"]',
+        '#call-duration-custom',
+        '.call-duration',
+        
+        // Call controls
+        '[data-tid="call-controls"]',
+        '[data-tid="call-controls-bar"]',
+        '[data-testid="call-controls"]',
+        '.call-controls',
+        
+        // Meeting controls
+        '[data-tid="toggle-mute"]',
+        '[data-tid="toggle-video"]',
+        '[data-tid="call-end-button"]',
+        
+        // Meeting stage
+        '.meeting-stage',
+        '[data-tid="meeting-stage"]',
+        
+        // Participant list
+        '[data-tid="roster-button"]',
+        '[data-tid="participants-button"]',
+        
+        // Screen sharing controls
+        '[data-tid="desktop-share-button"]',
+        '[data-tid="screen-share-button"]'
+    ];
+    
+    return activeMeetingIndicators.some(selector => {
+        try {
+            const element = document.querySelector(selector);
+            return element !== null && element.offsetParent !== null; // Must be visible
+        } catch (error) {
+            return false;
+        }
+    });
+}
+
+/**
+ * Check for caption containers (indicates captions are ready)
+ * @returns {boolean} True if caption containers are available
+ */
+function hasCaptionContainers() {
+    const captionContainerSelectors = [
+        "[data-tid='closed-caption-renderer-wrapper']", // Teams v2 structure
+        "[data-tid='closed-captions-renderer']",         // Legacy structure
+        ".closed-captions-container",
+        "[data-testid='caption-container']",
+        ".live-captions-container"
+    ];
+    
+    return captionContainerSelectors.some(selector => {
+        try {
+            const element = document.querySelector(selector);
+            return element !== null && 
+                   element.offsetParent !== null && // Must be visible
+                   captionManager.isCaptionContainerReady(element); // Must be ready
+        } catch (error) {
+            return false;
+        }
+    });
+}
+
+/**
+ * Enhanced meeting state monitoring with transition detection
+ */
+function checkForMeetingStateChanges() {
     try {
         const now = Date.now();
-        if (now - lastMeetingCheck < MEETING_CHECK_INTERVAL) {
+        if (now - captionManager.lastMeetingCheck < MEETING_CHECK_INTERVAL) {
             return;
         }
-        lastMeetingCheck = now;
+        captionManager.lastMeetingCheck = now;
         
+        // Detect current meeting state
+        const currentState = detectMeetingState();
+        
+        // Check for new meeting ID
         const newMeetingId = extractMeetingId();
-        
-        if (newMeetingId && newMeetingId !== currentMeetingId) {
-            if (currentMeetingId && transcriptArray.length > 0) {
-                console.log("New meeting detected, previous transcript data preserved until save/view");
-                console.log(`Previous meeting: ${currentMeetingId}`);
-                console.log(`New meeting: ${newMeetingId}`);
+        if (newMeetingId && newMeetingId !== captionManager.currentMeetingId) {
+            if (captionManager.currentMeetingId && transcriptArray.length > 0) {
+                Logger.info("New meeting detected, previous transcript data preserved until save/view");
+                Logger.info(`Previous meeting: ${captionManager.currentMeetingId}`);
+                Logger.info(`New meeting: ${newMeetingId}`);
                 
                 // Clear recently removed for new meeting
-                recentlyRemoved.length = 0;
+                captionManager.recentlyRemoved.length = 0;
             }
-            currentMeetingId = newMeetingId;
+            captionManager.currentMeetingId = newMeetingId;
         }
+        
+        // Handle state transitions
+        if (currentState !== captionManager.meetingState) {
+            const reason = `State detection: ${captionManager.meetingState} → ${currentState}`;
+            captionManager.transitionToState(currentState, reason);
+        }
+        
+        // Check for transition timeouts
+        if (captionManager.isTransitionTimedOut()) {
+            const timeoutReason = `Timeout in ${captionManager.meetingState} state (${captionManager.getTimeSinceTransition()}ms)`;
+            Logger.warn(timeoutReason);
+            
+            // Handle timeout based on current state
+            handleStateTimeout(captionManager.meetingState);
+        }
+        
     } catch (error) {
-        console.error('Error checking for new meeting:', error);
+        console.error('Error checking for meeting state changes:', error);
     }
+}
+
+/**
+ * Handle state transition timeouts
+ * @param {string} timedOutState - The state that timed out
+ */
+function handleStateTimeout(timedOutState) {
+    switch (timedOutState) {
+        case MEETING_STATES.JOINING:
+            // If joining takes too long, assume we're still in chat
+            captionManager.transitionToState(MEETING_STATES.CHAT, 'Joining timeout - returning to chat');
+            break;
+            
+        case MEETING_STATES.PRE_MEETING:
+            // If pre-meeting takes too long, check if we're actually in an active meeting
+            if (hasActiveMeetingIndicators()) {
+                captionManager.transitionToState(MEETING_STATES.MEETING_ACTIVE, 'Pre-meeting timeout - detected active meeting');
+            } else {
+                captionManager.transitionToState(MEETING_STATES.CHAT, 'Pre-meeting timeout - returning to chat');
+            }
+            break;
+            
+        case MEETING_STATES.MEETING_ACTIVE:
+            // If meeting is active but captions aren't ready, that's okay - just log it
+            Logger.info('Meeting active timeout - captions may not be enabled');
+            break;
+            
+        case MEETING_STATES.CAPTIONS_READY:
+            // This shouldn't timeout - captions ready is a stable state
+            Logger.debug('Captions ready timeout - this is expected');
+            break;
+            
+        default:
+            Logger.warn(`Unknown state timeout: ${timedOutState}`);
+            break;
+    }
+}
+
+/**
+ * Check if we've moved to a new meeting and should reset transcript data
+ * @deprecated Use checkForMeetingStateChanges() instead
+ */
+function checkForNewMeeting() {
+    // Legacy function - redirect to new state-aware function
+    checkForMeetingStateChanges();
 }
 
 /**
@@ -1137,7 +1960,7 @@ function safeDOMQuery(container, selectors) {
 }
 
 /**
- * Main caption checking function with hybrid snapshot/progressive approach
+ * Main caption checking function with state-aware processing
  */
 function checkCaptions() {
     // Prevent concurrent execution
@@ -1151,7 +1974,14 @@ function checkCaptions() {
     try {
         Logger.debug("Checking for captions...");
         
-        checkForNewMeeting();
+        // Check for meeting state changes
+        checkForMeetingStateChanges();
+        
+        // Only process captions if we're in the right state
+        if (captionManager.meetingState !== MEETING_STATES.CAPTIONS_READY) {
+            Logger.debug(`Skipping caption processing - current state: ${captionManager.meetingState}`);
+            return;
+        }
         
         // Check if captions are available
         const captionContainerSelectors = [
@@ -1164,6 +1994,14 @@ function checkCaptions() {
         const closedCaptionsContainer = safeDOMQuery(document, captionContainerSelectors);
         if (!closedCaptionsContainer) {
             Logger.debug("Caption container not found - captions may not be enabled");
+            // If we thought captions were ready but container is gone, update state
+            if (captionManager.meetingState === MEETING_STATES.CAPTIONS_READY) {
+                if (hasActiveMeetingIndicators()) {
+                    captionManager.transitionToState(MEETING_STATES.MEETING_ACTIVE, 'Caption container lost');
+                } else {
+                    captionManager.transitionToState(MEETING_STATES.CHAT, 'Caption container and meeting indicators lost');
+                }
+            }
             return;
         }
         
@@ -1245,109 +2083,310 @@ function processWithProgressiveDetection(closedCaptionsContainer) {
     Logger.debug(`Current transcript array length: ${transcriptArray.length}`);
 }
 
-// run startTranscription every 5 seconds
+// State-aware transcription startup
 function startTranscription() {
     try {
-        // Check if we're in a meeting
-        const meetingIndicators = [
-            document.getElementById("call-duration-custom"),
-            document.querySelector("[data-tid='call-status-container-test-id']"),
-            document.querySelector("#call-status"),
-            Array.from(document.querySelectorAll('span')).find(el => 
-                el.textContent && el.textContent.includes("Waiting for others to join")
-            )
-        ];
+        Logger.info("Starting transcription with state-aware detection");
         
-        const inMeeting = meetingIndicators.some(indicator => indicator !== null && indicator !== undefined);
+        // Detect current meeting state
+        const currentState = detectMeetingState();
+        Logger.info(`Initial meeting state detected: ${currentState}`);
         
-        if (!inMeeting) {
-            console.log("Not in meeting, retrying in 5 seconds...");
-            setTimeout(startTranscription, 5000);
-            return false;
-        }
-
-        console.log("✅ Meeting detected");
-
-        // Try multiple selectors for Teams v2 compatibility
-        const captionContainerSelectors = [
-            "[data-tid='closed-caption-renderer-wrapper']", // Teams v2 structure
-            "[data-tid='closed-captions-renderer']"         // Legacy structure
-        ];
-        
-        const closedCaptionsContainer = safeDOMQuery(document, captionContainerSelectors);
-        if (!closedCaptionsContainer) {
-            console.log("❌ Caption container not found - Please enable captions: More > Language and speech > Turn on live captions");
-            setTimeout(startTranscription, 5000);
-            return false;
-        }
-
-        console.log("✅ Caption container found");
-
         // Initialize meeting tracking
-        currentMeetingId = extractMeetingId();
+        captionManager.currentMeetingId = extractMeetingId();
         
-        // Clean up any existing observer
-        cleanupObserver();
+        // Transition to detected state
+        captionManager.transitionToState(currentState, 'Initial state detection');
         
-        capturing = true;
-        observer = new MutationObserver(debouncedCheckCaptions);
-        observer.observe(closedCaptionsContainer, {
-            childList: true,
-            subtree: true,
-            characterData: true
-        });
+        // Handle initial state appropriately
+        switch (currentState) {
+            case MEETING_STATES.CHAT:
+                Logger.info("Currently in chat - monitoring for meeting activity");
+                scheduleNextCheck(5000); // Check again in 5 seconds
+                return false;
+                
+            case MEETING_STATES.JOINING:
+                Logger.info("Meeting join detected - monitoring for meeting start");
+                scheduleNextCheck(2000); // Check more frequently during join
+                return false;
+                
+            case MEETING_STATES.PRE_MEETING:
+                Logger.info("Pre-meeting state detected - monitoring for meeting activation");
+                scheduleNextCheck(3000); // Check every 3 seconds
+                return false;
+                
+            case MEETING_STATES.MEETING_ACTIVE:
+                Logger.info("Active meeting detected - looking for captions");
+                scheduleNextCheck(2000); // Check frequently for captions
+                return false;
+                
+            case MEETING_STATES.CAPTIONS_READY:
+                Logger.info("Captions ready - starting capture");
+                startCaptureSystem().then(success => {
+                    if (success) {
+                        Logger.info("Caption capture started successfully");
+                    } else {
+                        Logger.warn("Caption capture failed to start");
+                    }
+                });
+                return false; // Return false since we're starting async
+                
+            default:
+                Logger.warn(`Unknown meeting state: ${currentState}`);
+                scheduleNextCheck(5000);
+                return false;
+        }
+        
+    } catch (error) {
+        Logger.error('Error in startTranscription:', error);
+        showUserNotification('Failed to start caption capturing. Please refresh the page and try again.', 'error');
+        scheduleNextCheck(10000); // Retry in 10 seconds on error
+        return false;
+    }
+}
+
+/**
+ * Schedule next transcription check
+ * @param {number} delay - Delay in milliseconds
+ */
+function scheduleNextCheck(delay) {
+    setTimeout(() => {
+        // Only restart if we're not already capturing
+        if (!captionManager.capturing) {
+            startTranscription();
+        }
+    }, delay);
+}
+
+/**
+ * Start the actual caption capture system
+ * @returns {Promise<boolean>} True if capture started successfully
+ */
+async function startCaptureSystem() {
+    try {
+        // Check if we already have a healthy observer
+        if (captionManager.ensureObserverHealth()) {
+            Logger.info("Observer is already healthy - reusing existing observer");
+            captionManager.capturing = true;
+            
+            // Start the hybrid capture system if not already running
+            if (captionManager.captureMode === 'snapshot' && !captionManager.snapshotCheckTimer) {
+                Logger.info("Starting hybrid snapshot-based caption capture");
+                captionManager.startSnapshotMonitoring();
+            } else if (captionManager.captureMode !== 'snapshot') {
+                Logger.info("Using progressive fallback caption capture");
+            }
+            
+            // Do an initial check
+            checkCaptions();
+            Logger.info(`Caption capturing resumed successfully for meeting: ${captionManager.currentMeetingId} (Mode: ${captionManager.captureMode})`);
+            return true;
+        }
+        
+        // Use progressive container detection for better reliability
+        Logger.info("Searching for caption container using progressive detection");
+        const closedCaptionsContainer = await captionManager.waitForCaptionContainer(30000); // 30 second timeout
+        
+        if (!closedCaptionsContainer) {
+            Logger.warn("Caption container not found during capture startup");
+            // Transition back to meeting active state
+            captionManager.transitionToState(MEETING_STATES.MEETING_ACTIVE, 'Caption container not found during startup');
+            scheduleNextCheck(5000);
+            return false;
+        }
+
+        Logger.info("Caption container found - starting new capture system");
+
+        // Use smart observer management instead of aggressive cleanup
+        if (!captionManager.recreateObserver()) {
+            Logger.error("Failed to create observer for caption capture");
+            return false;
+        }
+        
+        captionManager.capturing = true;
         
         // Add cleanup function
-        cleanupFunctions.push(() => cleanupObserver());
+        captionManager.cleanupFunctions.push(() => captionManager.cleanupCaptureResources());
         
         // Start the hybrid capture system
         if (captionManager.captureMode === 'snapshot') {
-            console.log("🚀 Starting hybrid snapshot-based caption capture...");
+            Logger.info("Starting hybrid snapshot-based caption capture");
             captionManager.startSnapshotMonitoring();
         } else {
-            console.log("🚀 Starting progressive fallback caption capture...");
+            Logger.info("Starting progressive fallback caption capture");
         }
         
         // Do an initial check
         checkCaptions();
-        console.log(`Caption capturing started successfully for meeting: ${currentMeetingId} (Mode: ${captionManager.captureMode})`);
+        Logger.info(`Caption capturing started successfully for meeting: ${captionManager.currentMeetingId} (Mode: ${captionManager.captureMode})`);
 
         return true;
     } catch (error) {
-        console.error('Error in startTranscription:', error);
-        showUserError('Failed to start caption capturing. Please refresh the page and try again.');
+        Logger.error('Error starting capture system:', error);
+        showUserNotification('Failed to start caption capture system. Please refresh the page and try again.', 'error');
         return false;
     }
 }
 
 /**
  * Display error message to user
+ * @deprecated Use showUserNotification() instead
  */
 function showUserError(message) {
+    showUserNotification(message, 'error');
+}
+
+/**
+ * Display notification to user with different types
+ * @param {string} message - Message to display
+ * @param {string} type - Notification type: 'error', 'warning', 'info', 'success'
+ * @param {number} duration - Duration in milliseconds (default: 5000)
+ */
+function showUserNotification(message, type = 'info', duration = 5000) {
     const notification = document.createElement('div');
+    
+    // Different styles for different notification types
+    const styles = {
+        error: {
+            background: '#d32f2f',
+            color: 'white',
+            icon: '❌'
+        },
+        warning: {
+            background: '#ff9800',
+            color: 'white',
+            icon: '⚠️'
+        },
+        info: {
+            background: '#2196f3',
+            color: 'white',
+            icon: 'ℹ️'
+        },
+        success: {
+            background: '#4caf50',
+            color: 'white',
+            icon: '✅'
+        }
+    };
+    
+    const style = styles[type] || styles.info;
+    
     notification.style.cssText = `
         position: fixed;
         top: 20px;
         right: 20px;
-        background: #d32f2f;
-        color: white;
+        background: ${style.background};
+        color: ${style.color};
         padding: 15px;
-        border-radius: 5px;
+        border-radius: 8px;
         z-index: 10000;
-        max-width: 300px;
-        font-family: Arial, sans-serif;
+        max-width: 350px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         font-size: 14px;
-        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        line-height: 1.4;
+        opacity: 0;
+        transform: translateX(100px);
+        transition: all 0.3s ease;
     `;
-    notification.textContent = `MS Teams Caption Saver: ${message}`;
+    
+    notification.innerHTML = `
+        <div style="display: flex; align-items: flex-start; gap: 10px;">
+            <span style="flex-shrink: 0; font-size: 16px;">${style.icon}</span>
+            <div>
+                <div style="font-weight: 600; margin-bottom: 2px;">MS Teams Caption Saver</div>
+                <div style="font-size: 13px; opacity: 0.9;">${message}</div>
+            </div>
+        </div>
+    `;
     
     document.body.appendChild(notification);
     
+    // Animate in
+    setTimeout(() => {
+        notification.style.opacity = '1';
+        notification.style.transform = 'translateX(0)';
+    }, 50);
+    
+    // Auto-remove after duration
     setTimeout(() => {
         if (notification.parentNode) {
-            notification.parentNode.removeChild(notification);
+            notification.style.opacity = '0';
+            notification.style.transform = 'translateX(100px)';
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.parentNode.removeChild(notification);
+                }
+            }, 300);
         }
-    }, 5000);
+    }, duration);
+}
+
+/**
+ * Get state-specific user message
+ * @param {string} state - Current meeting state
+ * @returns {Object} Message object with text and type
+ */
+function getStateSpecificMessage(state) {
+    const messages = {
+        [MEETING_STATES.CHAT]: {
+            text: "Monitoring for meeting activity...",
+            type: 'info'
+        },
+        [MEETING_STATES.JOINING]: {
+            text: "Joining meeting - preparing caption capture...",
+            type: 'info'
+        },
+        [MEETING_STATES.PRE_MEETING]: {
+            text: "In meeting lobby - waiting for meeting to start...",
+            type: 'info'
+        },
+        [MEETING_STATES.MEETING_ACTIVE]: {
+            text: "Meeting active - looking for captions to be enabled...",
+            type: 'info'
+        },
+        [MEETING_STATES.CAPTIONS_READY]: {
+            text: "Caption capture active and ready!",
+            type: 'success'
+        }
+    };
+    
+    return messages[state] || {
+        text: `Unknown state: ${state}`,
+        type: 'warning'
+    };
+}
+
+/**
+ * Show state transition progress to user
+ * @param {string} fromState - Previous state
+ * @param {string} toState - New state
+ */
+function showStateTransitionProgress(fromState, toState) {
+    const message = getStateSpecificMessage(toState);
+    
+    // Only show certain transitions to avoid spam
+    const shouldShowTransition = [
+        MEETING_STATES.JOINING,
+        MEETING_STATES.PRE_MEETING,
+        MEETING_STATES.MEETING_ACTIVE,
+        MEETING_STATES.CAPTIONS_READY
+    ].includes(toState);
+    
+    if (shouldShowTransition) {
+        showUserNotification(message.text, message.type, 3000);
+        Logger.info(`State transition notification: ${fromState} → ${toState}`);
+    }
+}
+
+/**
+ * Show detailed status information to user
+ * @param {string} status - Status message
+ * @param {string} details - Additional details
+ */
+function showDetailedStatus(status, details) {
+    const message = details ? `${status}\n\n${details}` : status;
+    showUserNotification(message, 'info', 4000);
 }
 
 /**
@@ -1357,6 +2396,14 @@ function showUserError(message) {
 function enforceMemoryLimits() {
     // Check if we're approaching the auto-save threshold
     if (transcriptArray.length >= AUTO_SAVE_THRESHOLD && transcriptArray.length % 1000 === 0) {
+        // Show user notification about reaching threshold
+        showUserNotification(
+            `You have ${transcriptArray.length} captions captured! ` +
+            `To prevent potential browser memory issues, consider saving the current transcript.`,
+            'warning',
+            10000 // Show for 10 seconds
+        );
+        
         // Warn user and offer auto-save to prevent loss
         const shouldAutoSave = confirm(
             `You have ${transcriptArray.length} captions captured! ` +
@@ -1375,6 +2422,13 @@ function enforceMemoryLimits() {
                 });
                 Logger.info(`Auto-saved ${transcriptArray.length} captions due to memory threshold`);
                 
+                // Show success notification
+                showUserNotification(
+                    `Auto-saved ${transcriptArray.length} captions successfully!`,
+                    'success',
+                    5000
+                );
+                
                 // Optionally clear after save (ask user)
                 setTimeout(() => {
                     const shouldClear = confirm(
@@ -1385,12 +2439,13 @@ function enforceMemoryLimits() {
                     if (shouldClear) {
                         resetTranscriptData();
                         Logger.info("Transcript data cleared after auto-save");
+                        showUserNotification("Transcript data cleared - starting fresh!", 'success');
                     }
                 }, 1000);
                 
             } catch (error) {
                 Logger.error("Auto-save failed:", error);
-                showUserError("Auto-save failed. Please manually save your captions to prevent loss.");
+                showUserNotification("Auto-save failed. Please manually save your captions to prevent loss.", 'error');
             }
         }
     }
@@ -1398,10 +2453,12 @@ function enforceMemoryLimits() {
     // CRITICAL: Only enforce hard limit at much higher threshold and with user warning
     if (transcriptArray.length > MAX_TRANSCRIPT_ENTRIES) {
         Logger.warn(`CRITICAL: Transcript array has reached ${transcriptArray.length} entries`);
-        showUserError(
+        showUserNotification(
             `CRITICAL: You have ${transcriptArray.length} captions! ` +
             `Please save your transcript immediately to prevent potential browser crashes. ` +
-            `Use the extension popup to save your captions.`
+            `Use the extension popup to save your captions.`,
+            'error',
+            15000 // Show for 15 seconds
         );
         
         // DO NOT automatically delete captions - let user decide
@@ -1433,26 +2490,12 @@ function extractMeetingTitle() {
 
 /**
  * Clean up observer and prevent memory leaks
+ * @deprecated Use captionManager.cleanupCaptureResources() instead
  */
 function cleanupObserver() {
-    if (observer) {
-        observer.disconnect();
-        observer = null;
-        console.log("🧹 Observer cleaned up");
-    }
-    
-    if (debounceTimer) {
-        clearTimeout(debounceTimer);
-        debounceTimer = null;
-        console.log("🧹 Debounce timer cleaned up");
-    }
-    
-    // Clean up snapshot monitoring
-    captionManager.stopSnapshotMonitoring();
-    console.log("🧹 Snapshot monitoring cleaned up");
-    
-    capturing = false;
-    isProcessing = false;
+    // Redirect to the new smart cleanup system
+    captionManager.cleanupCaptureResources();
+    Logger.info("🧹 Observer cleanup completed via captionManager");
 }
 
 /**
@@ -1904,7 +2947,11 @@ function attemptCrashRecovery() {
                     });
                     
                     Logger.info(`Recovered ${backupData.data.length} captions from backup`);
-                    showUserError(`Successfully recovered ${backupData.data.length} captions from previous session!`);
+                    showUserNotification(
+                        `Successfully recovered ${backupData.data.length} captions from previous session!`,
+                        'success',
+                        8000
+                    );
                     
                     // Clear the backup since it's been restored
                     localStorage.removeItem('caption_saver_backup');
@@ -1922,82 +2969,184 @@ function attemptCrashRecovery() {
 }
 
 /**
- * Enhanced observer restart with reliability checks and caption flow monitoring
+ * Enhanced observer reliability with state-aware grace periods
  */
 function ensureObserverReliability() {
-    // Check every 30 seconds if observer is still active
-    setInterval(() => {
-        if (capturing && !observer) {
-            Logger.warn('Observer lost - attempting restart');
-            startTranscription();
+    // State-specific health check intervals
+    const healthCheckIntervals = {
+        [MEETING_STATES.CHAT]: 60000,           // 1 minute - low frequency
+        [MEETING_STATES.JOINING]: 15000,        // 15 seconds - frequent during transition
+        [MEETING_STATES.PRE_MEETING]: 30000,    // 30 seconds - moderate frequency
+        [MEETING_STATES.MEETING_ACTIVE]: 20000, // 20 seconds - more frequent in meeting
+        [MEETING_STATES.CAPTIONS_READY]: 30000  // 30 seconds - standard monitoring
+    };
+    
+    let currentInterval = null;
+    
+    function scheduleHealthCheck() {
+        if (currentInterval) {
+            clearInterval(currentInterval);
         }
         
-        // Also check if DOM container still exists
-        if (capturing && observer) {
-            const captionContainerSelectors = [
-                "[data-tid='closed-caption-renderer-wrapper']", // Teams v2 structure
-                "[data-tid='closed-captions-renderer']"         // Legacy structure
-            ];
-            const container = safeDOMQuery(document, captionContainerSelectors);
-            if (!container) {
-                Logger.warn('Caption container lost - observer may be orphaned');
-                cleanupObserver();
-                setTimeout(() => startTranscription(), 2000); // Retry after 2 seconds
-            }
+        const interval = healthCheckIntervals[captionManager.meetingState] || 30000;
+        Logger.debug(`Scheduling health check for state ${captionManager.meetingState} every ${interval}ms`);
+        
+        currentInterval = setInterval(() => {
+            performStateAwareHealthCheck();
+        }, interval);
+    }
+    
+    // Initial health check setup
+    scheduleHealthCheck();
+    
+    // Update interval when state changes
+    const originalTransitionToState = captionManager.transitionToState;
+    captionManager.transitionToState = function(newState, reason) {
+        originalTransitionToState.call(this, newState, reason);
+        scheduleHealthCheck();
+    };
+}
+
+/**
+ * Perform health check that respects transition states and grace periods
+ */
+function performStateAwareHealthCheck() {
+    try {
+        // Skip health checks during transition grace periods
+        if (captionManager.isInTransitionGracePeriod()) {
+            Logger.debug('Skipping health check during transition grace period');
+            return;
         }
         
-        // CRITICAL: Check if captions have stopped flowing for too long
-        const timeSinceLastCaption = Date.now() - captionManager.lastCaptionTime;
-        // Check for caption elements in both v2 and legacy structures
-        const captionElements = document.querySelectorAll(
-            "[data-tid='closed-caption-renderer-wrapper'] .fui-ChatMessageCompact, " +
-            "[data-tid='closed-captions-renderer'] .fui-ChatMessageCompact"
-        );
+        // Only perform caption flow checks if we're in the right state
+        if (captionManager.meetingState !== MEETING_STATES.CAPTIONS_READY) {
+            Logger.debug(`Skipping caption flow check - current state: ${captionManager.meetingState}`);
+            return;
+        }
         
-        // If we haven't captured captions in 5 minutes but DOM shows captions exist, restart
-        if (capturing && timeSinceLastCaption > 5 * 60 * 1000 && captionElements.length > 0) {
-            Logger.warn(`CRITICAL: No captions captured for ${Math.round(timeSinceLastCaption/60000)} minutes but DOM shows ${captionElements.length} caption elements`);
+        // Check observer health
+        if (captionManager.capturing && !captionManager.checkObserverHealth()) {
+            Logger.warn('Observer health check failed - attempting recovery');
             
-            // Show warning to user
-            showUserError(
-                `WARNING: Caption capture may have stopped! ` +
+            // Try to restore observer health
+            if (captionManager.ensureObserverHealth()) {
+                Logger.info('Observer health restored successfully');
+            } else {
+                Logger.error('Failed to restore observer health');
+                // Transition to meeting active state - captions may need to be re-enabled
+                captionManager.transitionToState(MEETING_STATES.MEETING_ACTIVE, 'Observer health check failed');
+            }
+            return;
+        }
+        
+        // Check caption flow - only if we've been in captions ready state for a while
+        const timeInCurrentState = captionManager.getTimeSinceTransition();
+        if (timeInCurrentState < 2 * 60 * 1000) { // Less than 2 minutes in current state
+            Logger.debug('Skipping caption flow check - recently transitioned to captions ready');
+            return;
+        }
+        
+        checkCaptionFlow();
+        
+    } catch (error) {
+        Logger.error('Error in state-aware health check:', error);
+    }
+}
+
+/**
+ * Check if captions are flowing properly
+ */
+function checkCaptionFlow() {
+    const timeSinceLastCaption = Date.now() - captionManager.lastCaptionTime;
+    
+    // Check for caption elements in both v2 and legacy structures
+    const captionElements = document.querySelectorAll(
+        "[data-tid='closed-caption-renderer-wrapper'] .fui-ChatMessageCompact, " +
+        "[data-tid='closed-captions-renderer'] .fui-ChatMessageCompact"
+    );
+    
+    const captionFlowStoppedThreshold = 5 * 60 * 1000; // 5 minutes
+    
+    // If we haven't captured captions in 5 minutes but DOM shows captions exist, there's an issue
+    if (timeSinceLastCaption > captionFlowStoppedThreshold && captionElements.length > 0) {
+        Logger.warn(`Caption flow issue detected: ${Math.round(timeSinceLastCaption/60000)} minutes since last caption, but ${captionElements.length} caption elements visible`);
+        
+        // Try to fix the issue first
+        if (captionManager.ensureObserverHealth()) {
+            Logger.info('Observer health restored - caption flow should resume');
+        } else {
+            // If we can't fix it, notify user and restart
+            Logger.error('Cannot restore observer health - notifying user and restarting');
+            
+            showUserNotification(
+                `Caption capture appears to have stopped. ` +
                 `No captions captured for ${Math.round(timeSinceLastCaption/60000)} minutes. ` +
-                `Attempting to restart...`
+                `Attempting to restart...`,
+                'warning'
             );
             
-            // Force restart the observer
-            cleanupObserver();
-            setTimeout(() => {
-                startTranscription();
-                Logger.info('Forced restart due to caption flow interruption');
-            }, 1000);
+            // Restart the entire system
+            restartCaptureSystem();
         }
+    } else if (timeSinceLastCaption > captionFlowStoppedThreshold) {
+        // No captions captured and no caption elements visible - probably no one is talking
+        Logger.debug(`No caption activity for ${Math.round(timeSinceLastCaption/60000)} minutes, but no caption elements visible - this is normal during silence`);
+    }
+}
+
+/**
+ * Restart the capture system gracefully
+ */
+function restartCaptureSystem() {
+    try {
+        Logger.info('Restarting caption capture system');
         
-    }, 30000);
+        // Clean up current system
+        captionManager.cleanupCaptureResources();
+        
+        // Transition to meeting active state and let the system detect captions again
+        captionManager.transitionToState(MEETING_STATES.MEETING_ACTIVE, 'Caption flow restart');
+        
+        // Schedule restart
+        setTimeout(() => {
+            startTranscription();
+            Logger.info('Caption capture system restarted');
+        }, 2000);
+        
+    } catch (error) {
+        Logger.error('Error restarting capture system:', error);
+    }
 }
 
 /**
  * Periodic health check to ensure capture is working
+ * @deprecated Use ensureObserverReliability() instead
  */
 function performHealthCheck() {
     setInterval(() => {
-        if (capturing) {
+        if (captionManager.capturing) {
             const stats = {
                 totalCaptions: transcriptArray.length,
                 captureRate: captionManager.captionCount,
                 timeSinceLastCaption: Date.now() - captionManager.lastCaptionTime,
-                observerActive: !!observer,
+                observerActive: !!captionManager.observer,
+                meetingState: captionManager.meetingState,
+                timeInState: captionManager.getTimeSinceTransition(),
+                isInGracePeriod: captionManager.isInTransitionGracePeriod(),
                 containerExists: !!(safeDOMQuery(document, [
                     "[data-tid='closed-caption-renderer-wrapper']",
                     "[data-tid='closed-captions-renderer']"
                 ]))
             };
             
-            Logger.debug('Health Check:', stats);
+            Logger.debug('Legacy Health Check:', stats);
             
-            // Alert user if something looks wrong
-            if (stats.timeSinceLastCaption > 10 * 60 * 1000 && stats.containerExists) {
-                Logger.warn('Potential caption capture issue detected');
+            // Only alert if not in grace period and in captions ready state
+            if (!stats.isInGracePeriod && 
+                captionManager.meetingState === MEETING_STATES.CAPTIONS_READY &&
+                stats.timeSinceLastCaption > 10 * 60 * 1000 && 
+                stats.containerExists) {
+                Logger.warn('Potential caption capture issue detected in legacy health check');
             }
         }
     }, 60000); // Every minute
@@ -2011,7 +3160,15 @@ startTranscription();
 
 // Ensure long-term reliability
 ensureObserverReliability();
-performHealthCheck();
+
+// Enhanced logging for debugging
+Logger.info('=== Teams Caption Saver - State-Aware Architecture Initialized ===');
+Logger.info(`Extension version: ${chrome.runtime.getManifest ? chrome.runtime.getManifest().version : 'unknown'}`);
+Logger.info(`Meeting ID: ${captionManager.currentMeetingId || 'not detected'}`);
+Logger.info(`Initial state: ${captionManager.meetingState}`);
+Logger.info(`URL: ${window.location.href}`);
+Logger.info(`Timestamp: ${new Date().toISOString()}`);
+Logger.info('==============================================================');
 
 // Run tests only if in development mode (check for console availability and development indicators)
 if (typeof console !== 'undefined' && 
@@ -2065,7 +3222,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 if (!capturing) {
                     const errorMsg = "Caption capturing is not active. Please make sure you're in a Teams meeting with captions enabled.";
                     Logger.error(errorMsg);
-                    showUserError(errorMsg);
+                    showUserNotification(errorMsg, 'error');
                     sendResponse({success: false, error: errorMsg});
                     return;
                 }
@@ -2073,7 +3230,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 if (transcriptArray.length === 0) {
                     const errorMsg = "No captions captured yet. Please make sure live captions are turned on in Teams.";
                     console.error(errorMsg);
-                    showUserError(errorMsg);
+                    showUserNotification(errorMsg, 'error');
                     sendResponse({success: false, error: errorMsg});
                     return;
                 }
@@ -2095,7 +3252,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     sendResponse({success: true});
                 } catch (error) {
                     console.error('Error sending download message:', error);
-                    showUserError('Failed to initiate download: ' + error.message);
+                    showUserNotification('Failed to initiate download: ' + error.message, 'error');
                     sendResponse({success: false, error: error.message});
                 }
                 break;
@@ -2105,7 +3262,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 if (!capturing) {
                     const errorMsg = "Caption capturing is not active. Please make sure you're in a Teams meeting with captions enabled.";
                     console.error(errorMsg);
-                    showUserError(errorMsg);
+                    showUserNotification(errorMsg, 'error');
                     sendResponse({success: false, error: errorMsg});
                     return;
                 }
@@ -2113,7 +3270,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 if (transcriptArray.length === 0) {
                     const errorMsg = "No captions captured yet. Please make sure live captions are turned on in Teams.";
                     console.error(errorMsg);
-                    showUserError(errorMsg);
+                    showUserNotification(errorMsg, 'error');
                     sendResponse({success: false, error: errorMsg});
                     return;
                 }
@@ -2128,21 +3285,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     sendResponse({success: true});
                 } catch (error) {
                     console.error('Error sending viewer message:', error);
-                    showUserError('Failed to open caption viewer: ' + error.message);
+                    showUserNotification('Failed to open caption viewer: ' + error.message, 'error');
                     sendResponse({success: false, error: error.message});
                 }
                 break;
 
             case 'error_notification':
                 if (request.error) {
-                    showUserError(request.error);
+                    showUserNotification(request.error, 'error');
                 }
                 sendResponse({success: true});
                 break;
 
             case 'reset_transcript':
                 resetTranscriptData();
-                showUserError('Transcript data cleared. Starting fresh!');
+                showUserNotification('Transcript data cleared. Starting fresh!', 'success');
                 sendResponse({success: true});
                 break;
 
@@ -2160,7 +3317,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
     } catch (error) {
         console.error('Error handling message:', error);
-        showUserError('Internal error: ' + error.message);
+        showUserNotification('Internal error: ' + error.message, 'error');
         sendResponse({success: false, error: error.message});
     }
 });

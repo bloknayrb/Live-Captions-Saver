@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is an enterprise-grade Chrome browser extension that provides zero-loss caption capture from Microsoft Teams meetings. Version 3.6.2 features comprehensive reliability improvements, crash recovery, auto-save functionality, and performance optimizations. The extension runs on `teams.microsoft.com` and provides users with robust caption management capabilities.
+This is an enterprise-grade Chrome browser extension that provides zero-loss caption capture from Microsoft Teams meetings. Version 3.7.0 features a revolutionary transition-aware architecture that eliminates false "paused due to inactivity" alerts during chat-to-meeting transitions. The extension includes comprehensive reliability improvements, crash recovery, auto-save functionality, and performance optimizations. The extension runs on `teams.microsoft.com` and provides users with robust caption management capabilities.
 
 ## Architecture
 
@@ -19,9 +19,39 @@ The extension follows Chrome Extension Manifest V3 with enterprise-grade reliabi
 ### CaptionManager Class
 Centralized state management with:
 - **Encapsulated State**: All caption data, observers, and timers managed in one class
+- **Transition-Aware Architecture**: 5-state meeting model with graceful transitions
 - **Hash-based Deduplication**: O(1) duplicate detection using Set for performance
 - **Reliability Tracking**: lastCaptionTime and captionCount for health monitoring
 - **Memory Management**: Automatic backup to localStorage every 100 captions
+- **Smart Observer Management**: Health-aware observer lifecycle with re-targeting capabilities
+
+### Transition-Aware Architecture (v3.7.0)
+
+**Revolutionary 5-State Meeting Model**:
+```javascript
+const MEETING_STATES = {
+    CHAT: 'chat',                    // In Teams chat/general interface
+    JOINING: 'joining',              // Meeting join process started
+    PRE_MEETING: 'pre_meeting',      // In meeting lobby/waiting
+    MEETING_ACTIVE: 'meeting_active', // In active meeting
+    CAPTIONS_READY: 'captions_ready' // Captions container available
+};
+```
+
+**Key Features**:
+- **Eliminates False Alerts**: No more "paused due to inactivity" during chat-to-meeting transitions
+- **Grace Period Logic**: 1-minute grace period after state transitions prevents false alarms
+- **Progressive Timeout Strategy**: 5s → 15s → 30s → 45s timeouts for each transition
+- **State-Specific Health Monitoring**: Dynamic health check intervals based on current state
+- **Comprehensive Transition Logging**: Enhanced debugging with state transition history
+- **Smart Observer Re-targeting**: Reduces unnecessary observer recreation during transitions
+
+**State-Specific Health Check Intervals**:
+- **CHAT**: 60 seconds (low frequency monitoring)
+- **JOINING**: 15 seconds (frequent monitoring during transition)
+- **PRE_MEETING**: 30 seconds (moderate frequency)
+- **MEETING_ACTIVE**: 20 seconds (active monitoring in meeting)
+- **CAPTIONS_READY**: 30 seconds (standard caption monitoring)
 
 ### Caption Detection and Processing
 
@@ -51,12 +81,14 @@ Centralized state management with:
 
 ### Self-Healing Reliability System
 
-**30-Second Health Checks**:
-- **Observer Monitoring**: Verifies MutationObserver is active
-- **DOM Container Validation**: Ensures caption container exists
-- **Caption Flow Detection**: Alerts if no captions captured for 5+ minutes
-- **Auto-Restart**: Automatically restarts failed observers
-- **User Notifications**: Alerts user of potential capture issues
+**State-Aware Health Monitoring**:
+- **Dynamic Health Check Intervals**: Adjusts monitoring frequency based on meeting state
+- **Observer Health Verification**: Validates MutationObserver functionality before recreation
+- **Smart Observer Re-targeting**: Retargets observers instead of full recreation when possible
+- **Transition Grace Periods**: Prevents false alarms during state transitions
+- **Caption Flow Detection**: Distinguishes between silence and system issues
+- **Auto-Restart with Context**: Automatically restarts failed observers with state awareness
+- **Progressive Status Notifications**: User-friendly transition progress indicators
 
 **Crash Recovery**:
 - **localStorage Backup**: Last 500 captions saved every 100 additions
@@ -72,6 +104,35 @@ Centralized state management with:
 - **Input Sanitization**: Removes dangerous characters while preserving data integrity
 - **Error Boundaries**: Comprehensive exception handling prevents crashes
 
+## Key Architecture Components
+
+### Core Class Structure
+- **CaptionManager**: Central state management class in `content_script.js`
+  - Manages transcript array, observers, and timers
+  - Implements 5-state transition-aware architecture
+  - Handles dual capture modes: snapshot-based and progressive fallback
+  - Implements hash-based deduplication with `captionHashSet`
+  - Provides crash recovery through localStorage backup system
+  - Maintains state transition history for debugging
+  - Supports enhanced debug logging with URL parameters
+
+### Inter-Component Communication
+- **Content Script ↔ Popup**: Chrome extension messaging API
+  - `return_transcript`: Trigger save operation
+  - `get_captions_for_viewing`: Open viewer tab
+  - `clear_transcript`: Clear all captions with user confirmation
+- **Content Script ↔ Service Worker**: Background processing
+  - File download operations via `chrome.downloads` API
+  - HTML content generation for viewer tabs
+  - XSS protection through `escapeHtml()` function
+
+### DOM Interaction Patterns
+- **Multi-Selector Fallbacks**: Resilient DOM queries with `safeDOMQuery()`
+  - Primary: `[data-tid='closed-caption-renderer-wrapper']`
+  - Fallback: `[data-tid='closed-captions-renderer']`
+- **Debounced Processing**: Prevents race conditions in DOM observation
+- **Progressive Update Detection**: Whitelist-based algorithm for caption updates
+
 ## Development Commands
 
 This project uses modern JavaScript without build tools for simplicity and reliability.
@@ -83,20 +144,38 @@ This project uses modern JavaScript without build tools for simplicity and relia
 4. **Run Tests**: Comprehensive 18-test suite automatically runs in debug mode
 5. **Version Updates**: Increment version in `manifest.json` before publishing
 
-### Testing & Validation
-- **Syntax Validation**: `node -c content_script.js`
-- **Comprehensive Testing**: 18 automated test cases covering security, performance, reliability
-- **Manual Testing**: Load extension and test with live Teams meetings
-- **Performance Testing**: Monitor with 1000+ captions for memory/performance validation
-
-### Key Testing Commands
+### Essential Development Commands
 ```bash
-# Validate all JavaScript files
+# Navigate to extension directory
+cd teams-captions-saver
+
+# Validate all JavaScript files syntax
 node -c content_script.js && node -c popup.js && node -c service_worker.js
 
 # Check for potential issues
 grep -n "console\." *.js    # Find debug statements
 grep -n "TODO\|FIXME" *.js  # Find pending work
+
+# Package extension for Chrome Web Store
+cd .. && zip -r teams-captions-saver.zip teams-captions-saver/ -x "*.git*" "*.DS_Store*"
+```
+
+### Testing & Validation
+- **Syntax Validation**: `node -c <filename>.js` for individual files
+- **Comprehensive Testing**: 18 automated test cases automatically run in debug mode
+- **Manual Testing**: Load extension and test with live Teams meetings
+- **Performance Testing**: Monitor with 1000+ captions for memory/performance validation
+
+### Debug Mode Testing
+```javascript
+// Enable debug mode in browser console
+localStorage.setItem('caption_saver_debug', 'true');
+
+// Or add debug parameter to Teams URL
+// https://teams.microsoft.com/v2/?debug=true
+
+// Check test results in browser console
+// All 18 tests run automatically in debug mode
 ```
 
 ## File Structure
@@ -122,6 +201,22 @@ To publish updates to Chrome Web Store:
 
 The `Standalone-scripts/` directory contains alternative JavaScript implementations for environments where extensions are not allowed. These can be run directly in the browser console on Teams meetings.
 
+### Available Scripts
+- **`Capture-Teams-Captrions - YAML.js`**: Outputs captions in YAML format
+- **`Capture-Teams-Captrions - JSON.js`**: Outputs captions in JSON format
+
+### Usage
+1. Join a Teams meeting and enable live captions
+2. Open browser console (F12)
+3. Copy and paste the script content
+4. Run `downloadYAML()` or `downloadJSON()` to download transcript
+
+### Key Differences from Extension
+- No background processing or service worker
+- Direct DOM manipulation without Chrome API security
+- Manual execution required for download
+- Simplified deduplication logic
+
 ## Critical Implementation Notes
 
 ### Zero-Loss Guarantee
@@ -145,8 +240,11 @@ The `Standalone-scripts/` directory contains alternative JavaScript implementati
 ### Reliability Patterns
 - Use `safeDOMQuery()` with fallback selectors for DOM queries
 - Implement retry mechanisms with exponential backoff for critical operations
-- Monitor caption flow with health checks every 30 seconds
-- Auto-restart observers if caption flow stops for 5+ minutes
+- Monitor caption flow with state-aware health checks at dynamic intervals
+- Auto-restart observers with health verification and re-targeting capabilities
+- Respect transition grace periods to prevent false alarms during state changes
+- Use progressive container detection with multiple fallback selectors
+- Implement comprehensive state transition logging for debugging
 
 ## Testing
 
@@ -158,9 +256,42 @@ The `Standalone-scripts/` directory contains alternative JavaScript implementati
 
 **Manual Testing Checklist**:
 1. Load extension in Chrome and verify popup interface
-2. Join Teams meeting and enable live captions
-3. Verify caption capture with real-time deduplication
-4. Test save/view/clear functionality
-5. Test auto-save prompts at 5,000+ captions
-6. Test crash recovery by refreshing page
-7. Verify long meeting performance (1000+ captions)
+2. Test chat-to-meeting transitions (critical for v3.7.0)
+3. Join Teams meeting and enable live captions
+4. Verify caption capture with real-time deduplication
+5. Test save/view/clear functionality
+6. Test auto-save prompts at 5,000+ captions
+7. Test crash recovery by refreshing page
+8. Verify long meeting performance (1000+ captions)
+9. Test meeting-to-chat transitions and observer behavior
+10. Verify no false "paused due to inactivity" alerts during transitions
+
+## Common Development Tasks
+
+### Adding New DOM Selectors
+When Teams updates their UI, you may need to add new selectors:
+1. Inspect the new caption elements in Teams
+2. Add new selectors to the fallback arrays in `safeDOMQuery()` calls
+3. Test in both snapshot and progressive capture modes
+4. Update both extension and standalone scripts
+
+### Debugging Caption Capture Issues
+1. Enable debug mode: `localStorage.setItem('caption_saver_debug', 'true')` or add `?debug=true` to URL
+2. Check browser console for detailed logs including state transition history
+3. Verify DOM selectors are matching current Teams structure
+4. Test with different meeting types (scheduled, instant, recurring)
+5. Monitor state transitions during chat-to-meeting and meeting-to-chat flows
+6. Check transition timeouts and grace period handling
+7. Verify observer health checks and re-targeting behavior
+
+### Performance Optimization
+- Monitor memory usage with large caption counts (5000+)
+- Test deduplication efficiency with hash-based approach
+- Verify debounced processing prevents UI freezing
+- Check localStorage backup frequency and cleanup
+
+### Security Validation
+- Always validate input with `validateCaptionInput()`
+- Use `escapeHtml()` for any user-generated content
+- Test XSS prevention with malicious caption content
+- Verify Chrome API error boundaries handle failures gracefully

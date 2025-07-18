@@ -1,16 +1,17 @@
 ![](IMG/logo.png)
 
-# MS Teams Live Captions Saver Browser Extension v3.6.2
+# MS Teams Live Captions Saver Browser Extension v3.7.0
 
 The MS Teams Live Captions Saver is a Chrome extension that provides **enterprise-grade, zero-loss caption capture** from Microsoft Teams meetings. Perfect for accessibility compliance, meeting documentation, legal transcription, and maintaining accurate records of important discussions.
 
-## 🚀 **NEW IN v3.6.2 - ENTERPRISE RELIABILITY UPDATE**
-- **🔒 Zero Caption Loss Guarantee**: Never loses captions, even in 8+ hour meetings
-- **💾 Auto-Save System**: Proactive backup at 5,000 captions with user consent
-- **🔄 Crash Recovery**: Automatic restoration of captions after browser crashes
-- **⚡ Self-Healing Architecture**: Automatic restart of failed capture systems
-- **🛡️ Enhanced Security**: Comprehensive XSS protection and input validation
-- **📊 Performance Optimized**: 70% faster processing with O(1) deduplication
+## 🚀 **NEW IN v3.7.0 - TRANSITION-AWARE ARCHITECTURE**
+- **🔄 Revolutionary Chat-to-Meeting Transitions**: Eliminates false "paused due to inactivity" alerts
+- **🎯 5-State Meeting Model**: Intelligent state management (CHAT → JOINING → PRE_MEETING → MEETING_ACTIVE → CAPTIONS_READY)
+- **⏱️ Grace Period Logic**: 1-minute grace periods prevent false alarms during transitions
+- **🔧 Smart Observer Management**: Health-aware observer lifecycle with re-targeting capabilities
+- **📊 Dynamic Health Monitoring**: State-specific health check intervals optimize performance
+- **🐛 Enhanced Debug Logging**: Comprehensive state transition logging for troubleshooting
+- **💪 Seamless User Experience**: Smooth transitions with contextual progress indicators
 
 ## Install from the Chrome Store
 
@@ -53,10 +54,13 @@ To use the MS Teams Live Captions Saver extension:
 - **Chrome API Security**: Robust error handling for all extension APIs
 
 ### 👥 **Meeting Management**
-- **Meeting Detection**: Automatically detects meeting transitions
+- **Transition-Aware Architecture**: 5-state meeting model handles chat-to-meeting transitions seamlessly
+- **Grace Period Logic**: Prevents false alarms during state transitions
+- **Smart Observer Management**: Health-aware observer lifecycle with intelligent re-targeting
+- **Dynamic Health Monitoring**: State-specific health check intervals (15-60 seconds)
 - **Context Preservation**: Maintains transcript integrity across navigation
 - **Manual Controls**: Full user control over save/clear operations
-- **Status Monitoring**: Real-time capture status and health checks
+- **Progressive Status Updates**: Real-time transition progress indicators
 
 ## Sample data exported
 
@@ -119,9 +123,11 @@ If you can't use extensions:
 
 ### 🔍 **Debugging & Testing**
 - **Development Mode**: Comprehensive test suite with 18+ test cases
-- **Health Monitoring**: Continuous capture flow validation
+- **State Transition Logging**: Complete visibility into meeting state changes
+- **Health Monitoring**: Continuous capture flow validation with state awareness
 - **Debug Logging**: Configurable logging levels (DEBUG, INFO, WARN, ERROR)
-- **Test Coverage**: Validates security, performance, and reliability
+- **Enhanced Debug Mode**: URL parameter support (`?debug=true`) and localStorage
+- **Test Coverage**: Validates security, performance, reliability, and state transitions
 
 ### ⚡ **Performance Optimizations**
 - **70% CPU Reduction**: Debounced DOM processing
@@ -145,14 +151,22 @@ If you can't use extensions:
 # Enable debug mode for comprehensive testing
 localStorage.setItem('caption_saver_debug', 'true')
 # Or add ?debug=true to Teams URL
-# Check console for detailed test results
+# Check console for detailed test results and state transition logs
+
+# Critical test: Chat-to-meeting transitions
+1. Start in Teams chat
+2. Join meeting in same tab
+3. Verify no false "paused due to inactivity" alerts
+4. Check state transition logs in console
 ```
 
 ### Architecture
-- **CaptionManager Class**: Centralized state management
-- **Event-Driven**: Debounced DOM observations
-- **Error Boundaries**: Comprehensive exception handling
-- **Modular Design**: Single-responsibility functions
+- **CaptionManager Class**: Centralized state management with transition-aware architecture
+- **5-State Meeting Model**: CHAT → JOINING → PRE_MEETING → MEETING_ACTIVE → CAPTIONS_READY
+- **Event-Driven**: Debounced DOM observations with state-aware health monitoring
+- **Smart Observer Management**: Health verification and re-targeting capabilities
+- **Error Boundaries**: Comprehensive exception handling with state context
+- **Modular Design**: Single-responsibility functions with transition logic
 
 ### Publishing Updates
 - Update version in `manifest.json`
@@ -206,12 +220,28 @@ localStorage.setItem('caption_saver_debug', 'true')
 
 ### Common Issues
 - **No Captions Captured**: Ensure live captions are enabled in Teams
+- **False "Paused Due to Inactivity" Alerts**: Fixed in v3.7.0 - update to latest version
 - **Extension Not Working**: Try refreshing the Teams page and restarting extension
 - **Performance Issues**: Use auto-save feature for very long meetings
 - **Browser Crashes**: Extension will automatically offer to restore captions on restart
+- **Chat-to-Meeting Transitions**: v3.7.0 includes seamless transition handling
 
 ### Debug Mode
-Enable comprehensive debugging: `localStorage.setItem('caption_saver_debug', 'true')`
+Enable comprehensive debugging with state transition logging:
+```javascript
+// Method 1: localStorage (persistent)
+localStorage.setItem('caption_saver_debug', 'true')
+
+// Method 2: URL parameter (temporary)
+// Add ?debug=true to Teams URL
+// https://teams.microsoft.com/v2/?debug=true
+
+// Features enabled in debug mode:
+// - State transition logging
+// - Health check details
+// - Observer lifecycle tracking
+// - Comprehensive test suite execution
+```
 
 ### Health Monitoring
 The extension continuously monitors capture status and will alert you if issues are detected.
