@@ -2396,15 +2396,7 @@ function showDetailedStatus(status, details) {
 function enforceMemoryLimits() {
     // Check if we're approaching the auto-save threshold
     if (transcriptArray.length >= AUTO_SAVE_THRESHOLD && transcriptArray.length % 1000 === 0) {
-        // Show user notification about reaching threshold
-        showUserNotification(
-            `You have ${transcriptArray.length} captions captured! ` +
-            `To prevent potential browser memory issues, consider saving the current transcript.`,
-            'warning',
-            10000 // Show for 10 seconds
-        );
-        
-        // Warn user and offer auto-save to prevent loss
+        // Warn user and offer auto-save to prevent loss (single popup instead of notification + confirm)
         const shouldAutoSave = confirm(
             `You have ${transcriptArray.length} captions captured! ` +
             `To prevent potential browser memory issues, would you like to save the current transcript? ` +
@@ -3219,13 +3211,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         switch (request.message) {
             case 'return_transcript':
                 Logger.info("return_transcript request received:", { length: transcriptArray.length });
-                if (!capturing) {
-                    const errorMsg = "Caption capturing is not active. Please make sure you're in a Teams meeting with captions enabled.";
-                    Logger.error(errorMsg);
-                    showUserNotification(errorMsg, 'error');
-                    sendResponse({success: false, error: errorMsg});
-                    return;
-                }
+                // Allow saving even when not actively capturing (e.g., after meeting ends)
+                // if (!capturing) {
+                //     const errorMsg = "Caption capturing is not active. Please make sure you're in a Teams meeting with captions enabled.";
+                //     Logger.error(errorMsg);
+                //     showUserNotification(errorMsg, 'error');
+                //     sendResponse({success: false, error: errorMsg});
+                //     return;
+                // }
                 
                 if (transcriptArray.length === 0) {
                     const errorMsg = "No captions captured yet. Please make sure live captions are turned on in Teams.";
@@ -3259,13 +3252,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
             case 'get_captions_for_viewing':
                 console.log("get_captions_for_viewing request received:", transcriptArray);
-                if (!capturing) {
-                    const errorMsg = "Caption capturing is not active. Please make sure you're in a Teams meeting with captions enabled.";
-                    console.error(errorMsg);
-                    showUserNotification(errorMsg, 'error');
-                    sendResponse({success: false, error: errorMsg});
-                    return;
-                }
+                // Allow viewing even when not actively capturing (e.g., after meeting ends)
+                // if (!capturing) {
+                //     const errorMsg = "Caption capturing is not active. Please make sure you're in a Teams meeting with captions enabled.";
+                //     console.error(errorMsg);
+                //     showUserNotification(errorMsg, 'error');
+                //     sendResponse({success: false, error: errorMsg});
+                //     return;
+                // }
                 
                 if (transcriptArray.length === 0) {
                     const errorMsg = "No captions captured yet. Please make sure live captions are turned on in Teams.";
