@@ -7,13 +7,285 @@ const MEETING_STATES = {
     CAPTIONS_READY: 'captions_ready' // Captions container available
 };
 
-// Transition timeout constants
+/**
+ * Centralized configuration management system
+ * Supports runtime updates, environment-specific configs, and user preferences
+ */
+class ConfigManager {
+    constructor() {
+        this.config = this._getDefaultConfig();
+        this.overrides = new Map();
+        this.listeners = new Map();
+        
+        // Load saved user preferences
+        this._loadUserPreferences();
+        
+        // Load environment-specific overrides
+        this._loadEnvironmentConfig();
+    }
+    
+    /**
+     * Get default configuration values
+     * @private
+     */
+    _getDefaultConfig() {
+        return {
+            // State Transition Timeouts
+            TRANSITIONS: {
+                CHAT_TO_JOINING: 5000,
+                JOINING_TO_PRE_MEETING: 15000,
+                PRE_MEETING_TO_ACTIVE: 30000,
+                ACTIVE_TO_CAPTIONS_READY: 45000,
+                GRACE_PERIOD: 60000,
+                MAX_TRANSITION_QUEUE_SIZE: 5
+            },
+            
+            // Caption Processing
+            CAPTIONS: {
+                STABILITY_DELAY: 4000,
+                MIN_FOR_STABILITY: 3,
+                DEBOUNCE_DELAY: 300,
+                EMERGENCY_THRESHOLD: 50,
+                SNAPSHOT_CHECK_INTERVAL: 1000,
+                FALLBACK_TIMEOUT: 10000
+            },
+            
+            // Memory Management
+            MEMORY: {
+                MAX_TRANSCRIPT_ENTRIES: 10000,
+                AUTO_SAVE_THRESHOLD: 5000,
+                MEMORY_CHECK_INTERVAL: 100,
+                BACKUP_FREQUENCY: 100,
+                BACKUP_RETENTION_COUNT: 500,
+                BACKUP_EXPIRY_HOURS: 4,
+                MAX_RECENTLY_REMOVED: 10
+            },
+            
+            // Health Monitoring
+            HEALTH: {
+                CHECK_INTERVALS: {
+                    CHAT: 60000,
+                    JOINING: 15000,
+                    PRE_MEETING: 30000,
+                    MEETING_ACTIVE: 20000,
+                    CAPTIONS_READY: 30000
+                },
+                CAPTION_FLOW_TIMEOUT: 5 * 60 * 1000, // 5 minutes
+                MAX_RETRIES: 3,
+                RETRY_BACKOFF_MS: 1000
+            },
+            
+            // User Interface
+            UI: {
+                NOTIFICATION_COOLDOWN_MS: 30000,
+                NOTIFICATION_DURATION: {
+                    INFO: 3000,
+                    SUCCESS: 5000,
+                    WARNING: 8000,
+                    ERROR: 15000
+                }
+            },
+            
+            // Development/Debug
+            DEBUG: {
+                ENABLE_COMPREHENSIVE_TESTS: true,
+                LOG_LEVEL: 'INFO', // DEBUG, INFO, WARN, ERROR
+                PERFORMANCE_MONITORING: false,
+                TELEMETRY_ENABLED: false
+            },
+            
+            // Progressive Detection
+            PROGRESSIVE: {
+                CHECK_LOOKBACK: 5,
+                MIN_TEXT_LENGTH_FOR_ANALYSIS: 1,
+                MIN_PREFIX_EXPANSION_LENGTH: 2,
+                SAFE_REMOVAL_RECENT_ENTRIES: 3
+            }
+        };
+    }
+    
+    /**
+     * Get configuration value using dot notation
+     * @param {string} path - Configuration path (e.g., 'TRANSITIONS.GRACE_PERIOD')
+     * @returns {*} Configuration value
+     */
+    get(path) {
+        // Check for overrides first
+        if (this.overrides.has(path)) {
+            return this.overrides.get(path);
+        }
+        
+        // Navigate through nested object
+        const keys = path.split('.');
+        let current = this.config;
+        
+        for (const key of keys) {
+            if (current === null || current === undefined) {
+                console.warn(`Configuration path not found: ${path}`);
+                return undefined;
+            }
+            current = current[key];
+        }
+        
+        return current;
+    }
+    
+    /**
+     * Set configuration value with validation
+     * @param {string} path - Configuration path
+     * @param {*} value - New value
+     * @param {boolean} persist - Save to localStorage
+     */
+    set(path, value, persist = false) {
+        // Validate the path exists in default config
+        if (this.get(path) === undefined) {
+            throw new Error(`Invalid configuration path: ${path}`);
+        }
+        
+        const oldValue = this.get(path);
+        
+        // Type validation
+        if (typeof value !== typeof oldValue) {
+            throw new Error(`Type mismatch for ${path}: expected ${typeof oldValue}, got ${typeof value}`);
+        }
+        
+        // Set override
+        this.overrides.set(path, value);
+        
+        // Persist to localStorage if requested
+        if (persist) {
+            this._saveUserPreference(path, value);
+        }
+        
+        // Notify listeners
+        this._notifyListeners(path, value, oldValue);
+        
+        console.info(`Configuration updated: ${path} = ${value} (was: ${oldValue})`);
+    }
+    
+    /**
+     * Listen for configuration changes
+     * @param {string} path - Configuration path to watch
+     * @param {Function} callback - Callback function
+     */
+    onChange(path, callback) {
+        if (!this.listeners.has(path)) {
+            this.listeners.set(path, []);
+        }
+        this.listeners.get(path).push(callback);
+    }
+    
+    /**
+     * Load user preferences from localStorage
+     * @private
+     */
+    _loadUserPreferences() {
+        try {
+            const preferences = localStorage.getItem('caption_saver_config');
+            if (preferences) {
+                const parsed = JSON.parse(preferences);
+                Object.entries(parsed).forEach(([path, value]) => {
+                    this.overrides.set(path, value);
+                });
+                console.info(`Loaded ${Object.keys(parsed).length} user preferences`);
+            }
+        } catch (error) {
+            console.warn('Failed to load user preferences:', error);
+        }
+    }
+    
+    /**
+     * Load environment-specific configuration
+     * @private
+     */
+    _loadEnvironmentConfig() {
+        const isDebug = new URLSearchParams(window.location.search).has('debug') || 
+                       localStorage.getItem('caption_saver_debug') === 'true';
+        
+        if (isDebug) {
+            this.set('DEBUG.LOG_LEVEL', 'DEBUG');
+            this.set('DEBUG.PERFORMANCE_MONITORING', true);
+            this.set('CAPTIONS.DEBOUNCE_DELAY', 100); // Faster response in debug
+            console.info('Debug mode configuration loaded');
+        }
+        
+        // Production optimizations
+        if (window.location.hostname === 'teams.microsoft.com') {
+            this.set('HEALTH.CHECK_INTERVALS.MEETING_ACTIVE', 15000); // More frequent in production
+            this.set('MEMORY.AUTO_SAVE_THRESHOLD', 3000); // More aggressive auto-save
+        }
+    }
+    
+    /**
+     * Save user preference to localStorage
+     * @private
+     */
+    _saveUserPreference(path, value) {
+        try {
+            const preferences = JSON.parse(localStorage.getItem('caption_saver_config') || '{}');
+            preferences[path] = value;
+            localStorage.setItem('caption_saver_config', JSON.stringify(preferences));
+        } catch (error) {
+            console.warn('Failed to save user preference:', error);
+        }
+    }
+    
+    /**
+     * Notify configuration change listeners
+     * @private
+     */
+    _notifyListeners(path, newValue, oldValue) {
+        if (this.listeners.has(path)) {
+            this.listeners.get(path).forEach(callback => {
+                try {
+                    callback(newValue, oldValue, path);
+                } catch (error) {
+                    console.error('Configuration listener error:', error);
+                }
+            });
+        }
+    }
+    
+    /**
+     * Reset configuration to defaults
+     */
+    reset() {
+        this.overrides.clear();
+        localStorage.removeItem('caption_saver_config');
+        console.info('Configuration reset to defaults');
+    }
+    
+    /**
+     * Get current configuration as JSON for debugging
+     */
+    dump() {
+        const result = {};
+        const traverse = (obj, prefix = '') => {
+            Object.keys(obj).forEach(key => {
+                const path = prefix ? `${prefix}.${key}` : key;
+                const value = obj[key];
+                if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+                    traverse(value, path);
+                } else {
+                    result[path] = this.get(path); // Get actual value including overrides
+                }
+            });
+        };
+        traverse(this.config);
+        return result;
+    }
+}
+
+// Global configuration instance
+const config = new ConfigManager();
+
+// Dynamic accessors for existing constants
 const TRANSITION_TIMEOUTS = {
-    CHAT_TO_JOINING: 5000,           // 5 seconds
-    JOINING_TO_PRE_MEETING: 15000,   // 15 seconds  
-    PRE_MEETING_TO_ACTIVE: 30000,    // 30 seconds
-    ACTIVE_TO_CAPTIONS_READY: 45000, // 45 seconds
-    GRACE_PERIOD: 60000              // 1 minute grace period after any transition
+    get CHAT_TO_JOINING() { return config.get('TRANSITIONS.CHAT_TO_JOINING'); },
+    get JOINING_TO_PRE_MEETING() { return config.get('TRANSITIONS.JOINING_TO_PRE_MEETING'); },
+    get PRE_MEETING_TO_ACTIVE() { return config.get('TRANSITIONS.PRE_MEETING_TO_ACTIVE'); },
+    get ACTIVE_TO_CAPTIONS_READY() { return config.get('TRANSITIONS.ACTIVE_TO_CAPTIONS_READY'); },
+    get GRACE_PERIOD() { return config.get('TRANSITIONS.GRACE_PERIOD'); }
 };
 
 /**
@@ -37,6 +309,11 @@ class CaptionManager {
         this.stateTransitionTime = Date.now();
         this.transitionGracePeriod = TRANSITION_TIMEOUTS.GRACE_PERIOD;
         this.stateTransitionHistory = [];
+        
+        // Safe transition control
+        this.isTransitioning = false;
+        this.pendingTransitions = [];
+        this.retryCount = 0;
         
         // Race condition prevention
         this.debounceTimer = null;
@@ -67,22 +344,72 @@ class CaptionManager {
     }
     
     /**
-     * Transition to new meeting state with logging and history tracking
-     * @param {string} newState - New meeting state to transition to
-     * @param {string} reason - Reason for the transition
+     * Safe state transition with queuing and locking
+     * @param {string} newState - Target state
+     * @param {string} reason - Reason for transition
+     * @param {boolean} force - Force transition even if already in state
+     * @returns {boolean} True if transition executed successfully
      */
-    transitionToState(newState, reason = 'Unknown') {
+    transitionToState(newState, reason = 'Unknown', force = false) {
         // Validate state parameter
         if (!Object.values(MEETING_STATES).includes(newState)) {
             Logger.error(`Invalid state transition requested: ${newState}`);
-            return;
+            return false;
         }
         
-        if (this.meetingState === newState) {
-            return; // Already in target state
+        // Check if transition is needed (unless forced)
+        if (!force && this.meetingState === newState) {
+            Logger.debug(`Already in state ${newState}, skipping transition`);
+            return false;
         }
         
+        // If currently transitioning, queue this request
+        if (this.isTransitioning) {
+            Logger.debug(`Queuing transition to ${newState} (currently transitioning)`);
+            
+            // Limit queue size to prevent memory issues
+            if (this.pendingTransitions.length >= config.get('TRANSITIONS.MAX_TRANSITION_QUEUE_SIZE')) {
+                Logger.warn('Transition queue full, dropping oldest transition');
+                this.pendingTransitions.shift();
+            }
+            
+            this.pendingTransitions.push({ 
+                newState, 
+                reason, 
+                force, 
+                timestamp: Date.now() 
+            });
+            return false;
+        }
+        
+        // Acquire transition lock
+        this.isTransitioning = true;
+        
+        try {
+            return this._executeTransition(newState, reason);
+        } catch (error) {
+            Logger.error('Error during state transition:', error);
+            return false;
+        } finally {
+            // Release lock and process queued transitions
+            this.isTransitioning = false;
+            this._processQueuedTransitions();
+        }
+    }
+    
+    /**
+     * Execute the actual state transition
+     * @private
+     * @param {string} newState - Target state
+     * @param {string} reason - Reason for transition
+     * @returns {boolean} True if successful
+     */
+    _executeTransition(newState, reason) {
         const oldState = this.meetingState;
+        
+        Logger.info(`State transition: ${oldState} → ${newState} (${reason})`);
+        
+        // Update state atomically
         this.previousMeetingState = oldState;
         this.meetingState = newState;
         this.stateTransitionTime = Date.now();
@@ -100,8 +427,6 @@ class CaptionManager {
             this.stateTransitionHistory.shift();
         }
         
-        Logger.info(`Meeting state transition: ${oldState} → ${newState} (${reason})`);
-        
         // Enhanced debug logging
         if (this.debugMode) {
             Logger.debug(`State transition details:`, {
@@ -113,15 +438,67 @@ class CaptionManager {
                 meetingId: this.currentMeetingId,
                 captionCount: this.transcriptArray.length,
                 capturing: this.capturing,
-                url: window.location.href
+                url: window.location.href,
+                pendingTransitions: this.pendingTransitions.length
             });
         }
         
         // Show user transition progress
         showStateTransitionProgress(oldState, newState);
         
-        // Call transition-specific handlers
+        // Execute state-specific transition handlers
         this.onStateTransition(oldState, newState, reason);
+        
+        return true;
+    }
+    
+    /**
+     * Process any queued transitions
+     * @private
+     */
+    _processQueuedTransitions() {
+        if (this.pendingTransitions.length === 0) {
+            return;
+        }
+        
+        // Sort by timestamp to ensure proper order
+        this.pendingTransitions.sort((a, b) => a.timestamp - b.timestamp);
+        
+        // Take the most recent transition (discard outdated ones)
+        const transition = this.pendingTransitions.pop();
+        const discardedCount = this.pendingTransitions.length;
+        this.pendingTransitions.length = 0; // Clear all other pending transitions
+        
+        if (discardedCount > 0) {
+            Logger.debug(`Discarded ${discardedCount} outdated queued transitions`);
+        }
+        
+        Logger.debug(`Processing queued transition to ${transition.newState}`);
+        
+        // Execute the queued transition asynchronously to prevent stack overflow
+        setTimeout(() => {
+            this.transitionToState(
+                transition.newState, 
+                transition.reason + ' (queued)', 
+                transition.force
+            );
+        }, 0);
+    }
+    
+    /**
+     * Check if a transition is currently in progress
+     * @returns {boolean} True if transitioning
+     */
+    isTransitionInProgress() {
+        return this.isTransitioning;
+    }
+    
+    /**
+     * Get count of pending transitions
+     * @returns {number} Number of pending transitions
+     */
+    getPendingTransitionCount() {
+        return this.pendingTransitions.length;
     }
     
     /**
@@ -673,7 +1050,7 @@ class CaptionManager {
         
         this.snapshotCheckTimer = setInterval(() => {
             this.checkCaptionSnapshot();
-        }, SNAPSHOT_CHECK_INTERVAL);
+        }, SNAPSHOT_CHECK_INTERVAL());
         
         Logger.info('Snapshot monitoring started');
     }
@@ -714,10 +1091,10 @@ class CaptionManager {
                 // Store current snapshot data for potential processing
                 this.pendingCaptionData = this.parseCaptionSnapshot(currentSnapshot);
                 
-            } else if (this.pendingCaptionData.length >= MIN_CAPTIONS_FOR_STABILITY) {
+            } else if (this.pendingCaptionData.length >= MIN_CAPTIONS_FOR_STABILITY()) {
                 // No changes and we have sufficient captions - check if silence period has elapsed
                 const timeSinceLastChange = Date.now() - this.lastSnapshotTime;
-                if (timeSinceLastChange >= CAPTION_STABILITY_DELAY) {
+                if (timeSinceLastChange >= CAPTION_STABILITY_DELAY()) {
                     Logger.info(`Silence detected (${timeSinceLastChange}ms), processing stable caption batch`);
                     this.processStableCaptionBatch();
                 }
@@ -743,7 +1120,7 @@ class CaptionManager {
         this.silenceTimer = setTimeout(() => {
             Logger.debug('Silence timer expired, processing captions');
             this.processStableCaptionBatch();
-        }, CAPTION_STABILITY_DELAY);
+        }, CAPTION_STABILITY_DELAY());
     }
     
     /**
@@ -811,7 +1188,7 @@ class CaptionManager {
                 this.captionCount += addedCount;
                 
                 // Trigger memory management if needed
-                if (this.transcriptArray.length % MEMORY_CHECK_INTERVAL === 0) {
+                if (this.transcriptArray.length % MEMORY_CHECK_INTERVAL() === 0) {
                     enforceMemoryLimits();
                 }
                 
@@ -931,14 +1308,14 @@ class CaptionManager {
         }
         
         // Check for emergency capture threshold
-        if (this.pendingCaptionData.length > EMERGENCY_CAPTURE_THRESHOLD) {
+        if (this.pendingCaptionData.length > EMERGENCY_CAPTURE_THRESHOLD()) {
             Logger.warn(`Emergency capture triggered: ${this.pendingCaptionData.length} pending captions`);
             this.processStableCaptionBatch(); // Force process large queue
         }
         
         // Check for fallback timeout
         if (this.fallbackModeStartTime && 
-            Date.now() - this.fallbackModeStartTime > FALLBACK_TIMEOUT) {
+            Date.now() - this.fallbackModeStartTime > FALLBACK_TIMEOUT()) {
             Logger.info('Attempting to return to snapshot mode from fallback');
             this.switchToSnapshotMode();
         }
@@ -1035,33 +1412,34 @@ Object.defineProperty(globalThis, 'recentlyRemoved', {
     get: () => captionManager.recentlyRemoved
 });
 
-// Constants
-const MAX_RECENTLY_REMOVED = 10;
-const MAX_TRANSCRIPT_ENTRIES = 10000; // Higher limit - prevent memory issues but preserve captions
-const AUTO_SAVE_THRESHOLD = 5000; // Auto-save when reaching this threshold
+// Dynamic constants using configuration system
+const MAX_RECENTLY_REMOVED = () => config.get('MEMORY.MAX_RECENTLY_REMOVED');
+const MAX_TRANSCRIPT_ENTRIES = () => config.get('MEMORY.MAX_TRANSCRIPT_ENTRIES');
+const AUTO_SAVE_THRESHOLD = () => config.get('MEMORY.AUTO_SAVE_THRESHOLD');
 
 // Configuration constants
-const MEETING_CHECK_INTERVAL = 10000; // Check for meeting changes every 10 seconds
-const SAFE_REMOVAL_RECENT_ENTRIES = 3; // Only consider last 3 entries as "recent"
-const PROGRESSIVE_CHECK_LOOKBACK = 5; // Check last 5 entries for progressive updates
-const MIN_TEXT_LENGTH_FOR_ANALYSIS = 1; // Minimum text length for progressive analysis
-const MIN_PREFIX_EXPANSION_LENGTH = 2; // Minimum additional chars for prefix expansion
-const MEMORY_CHECK_INTERVAL = 100; // Check memory limits every 100 additions
-const DEBOUNCE_DELAY = 300; // Debounce DOM mutations to prevent race conditions
-const MAX_RETRIES = 3; // Maximum retries for failed operations
+const MEETING_CHECK_INTERVAL = 10000; // Check for meeting changes every 10 seconds - keep static for now
+const SAFE_REMOVAL_RECENT_ENTRIES = () => config.get('PROGRESSIVE.SAFE_REMOVAL_RECENT_ENTRIES');
+const PROGRESSIVE_CHECK_LOOKBACK = () => config.get('PROGRESSIVE.CHECK_LOOKBACK');
+const MIN_TEXT_LENGTH_FOR_ANALYSIS = () => config.get('PROGRESSIVE.MIN_TEXT_LENGTH_FOR_ANALYSIS');
+const MIN_PREFIX_EXPANSION_LENGTH = () => config.get('PROGRESSIVE.MIN_PREFIX_EXPANSION_LENGTH');
+const MEMORY_CHECK_INTERVAL = () => config.get('MEMORY.MEMORY_CHECK_INTERVAL');
+const DEBOUNCE_DELAY = () => config.get('CAPTIONS.DEBOUNCE_DELAY');
+const MAX_RETRIES = () => config.get('HEALTH.MAX_RETRIES');
 
 // Hybrid snapshot-based capture constants (inspired by Zerg00s approach)
-const CAPTION_STABILITY_DELAY = 4000; // Wait 4 seconds for caption stability (natural speech pause)
-const MIN_CAPTIONS_FOR_STABILITY = 3; // Minimum captions before considering stability processing
-const SNAPSHOT_CHECK_INTERVAL = 1000; // Check for caption changes every 1 second
-const FALLBACK_TIMEOUT = 10000; // Switch to fallback mode if snapshot mode fails for 10+ seconds
-const EMERGENCY_CAPTURE_THRESHOLD = 50; // Emergency capture if queue exceeds this size
+const CAPTION_STABILITY_DELAY = () => config.get('CAPTIONS.STABILITY_DELAY');
+const MIN_CAPTIONS_FOR_STABILITY = () => config.get('CAPTIONS.MIN_FOR_STABILITY');
+const SNAPSHOT_CHECK_INTERVAL = () => config.get('CAPTIONS.SNAPSHOT_CHECK_INTERVAL');
+const FALLBACK_TIMEOUT = () => config.get('CAPTIONS.FALLBACK_TIMEOUT');
+const EMERGENCY_CAPTURE_THRESHOLD = () => config.get('CAPTIONS.EMERGENCY_THRESHOLD');
 
 /**
  * Simple logging framework with levels
  */
 const Logger = {
-    level: 'INFO', // DEBUG, INFO, WARN, ERROR
+    get level() { return config.get('DEBUG.LOG_LEVEL'); },
+    set level(value) { config.set('DEBUG.LOG_LEVEL', value); },
     levels: { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 },
     
     shouldLog(level) {
@@ -1186,14 +1564,14 @@ function detectMeetingState() {
             return MEETING_STATES.PRE_MEETING;
         }
         
+        // Check for caption containers first (higher priority than general meeting indicators)
+        if (hasCaptionContainers()) {
+            return MEETING_STATES.CAPTIONS_READY;
+        }
+        
         // Check for active meeting indicators
         if (hasActiveMeetingIndicators()) {
             return MEETING_STATES.MEETING_ACTIVE;
-        }
-        
-        // Check for caption containers (meeting with captions ready)
-        if (hasCaptionContainers()) {
-            return MEETING_STATES.CAPTIONS_READY;
         }
         
         // Default to chat state
@@ -1506,7 +1884,7 @@ function isWhitelistedProgressive(oldText, newText) {
     const newTrimmed = normalizeTextForComparison(newText);
     
     // Prevent empty or very short text issues
-    if (oldTrimmed.length < MIN_TEXT_LENGTH_FOR_ANALYSIS || newTrimmed.length < MIN_TEXT_LENGTH_FOR_ANALYSIS) {
+    if (oldTrimmed.length < MIN_TEXT_LENGTH_FOR_ANALYSIS() || newTrimmed.length < MIN_TEXT_LENGTH_FOR_ANALYSIS()) {
         return {isProgressive: false, confidence: 'NONE', pattern: 'Text too short to analyze'};
     }
     
@@ -1525,7 +1903,7 @@ function isWhitelistedProgressive(oldText, newText) {
     }
     
     // Pattern 1b: Exact prefix expansion (VERY HIGH confidence)
-    if (newTrimmed.startsWith(oldTrimmed) && newTrimmed.length > oldTrimmed.length + MIN_PREFIX_EXPANSION_LENGTH) {
+    if (newTrimmed.startsWith(oldTrimmed) && newTrimmed.length > oldTrimmed.length + MIN_PREFIX_EXPANSION_LENGTH()) {
         // Additional safety: must end on word boundary
         const addedText = newTrimmed.substring(oldTrimmed.length).trim();
         if (addedText.length > 0 && /^[\s\w]/.test(addedText)) {
@@ -1684,7 +2062,7 @@ function isSafeToRemove(entry) {
         
         // If this is one of the last few entries added, it's probably recent
         const entryIndex = transcriptArray.findIndex(e => e.ID === entry.ID);
-        const isRecent = entryIndex >= transcriptArray.length - SAFE_REMOVAL_RECENT_ENTRIES;
+        const isRecent = entryIndex >= transcriptArray.length - SAFE_REMOVAL_RECENT_ENTRIES();
         
         return isRecent;
     } catch (error) {
@@ -1721,7 +2099,7 @@ function safelyRemoveEntry(index, reason) {
     });
     
     // Keep only recent removals
-    if (recentlyRemoved.length > MAX_RECENTLY_REMOVED) {
+    if (recentlyRemoved.length > MAX_RECENTLY_REMOVED()) {
         recentlyRemoved.pop();
     }
     
@@ -1754,7 +2132,7 @@ function handleProgressiveCaption(name, text) {
     let checkedEntries = 0;
     const maxChecks = 3; // Check up to 3 recent entries from same speaker
     
-    for (let i = transcriptArray.length - 1; i >= Math.max(0, transcriptArray.length - PROGRESSIVE_CHECK_LOOKBACK) && checkedEntries < maxChecks; i--) {
+    for (let i = transcriptArray.length - 1; i >= Math.max(0, transcriptArray.length - PROGRESSIVE_CHECK_LOOKBACK()) && checkedEntries < maxChecks; i--) {
         const entry = transcriptArray[i];
         
         if (entry.Name === name) {
@@ -1823,7 +2201,7 @@ function addCaptionToTranscript(name, text) {
     }
     
     // Enforce memory limits periodically (with zero-loss policy)
-    if (transcriptArray.length % MEMORY_CHECK_INTERVAL === 0) {
+    if (transcriptArray.length % MEMORY_CHECK_INTERVAL() === 0) {
         enforceMemoryLimits();
     }
 }
@@ -1910,7 +2288,7 @@ function debouncedCheckCaptions() {
         if (!isProcessing) {
             checkCaptions();
         }
-    }, DEBOUNCE_DELAY);
+    }, DEBOUNCE_DELAY());
 }
 
 /**
@@ -1919,7 +2297,7 @@ function debouncedCheckCaptions() {
  * @param {number} maxRetries - Maximum number of retries
  * @param {string} operationName - Name of operation for logging
  */
-async function retryOperation(operation, maxRetries = MAX_RETRIES, operationName = 'operation') {
+async function retryOperation(operation, maxRetries = MAX_RETRIES(), operationName = 'operation') {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
             return await operation();
@@ -2150,6 +2528,16 @@ function startTranscription() {
  * @param {number} delay - Delay in milliseconds
  */
 function scheduleNextCheck(delay) {
+    // Prevent infinite loops with retry counter
+    captionManager.retryCount = (captionManager.retryCount || 0) + 1;
+    
+    if (captionManager.retryCount > 20) {
+        Logger.error('Too many startTranscription retries (20+), stopping to prevent infinite loop');
+        Logger.error(`Current state: ${captionManager.meetingState}, capturing: ${captionManager.capturing}`);
+        showUserNotification('Caption system stopped due to repeated failures. Please refresh the page.', 'error');
+        return;
+    }
+    
     setTimeout(() => {
         // Only restart if we're not already capturing
         if (!captionManager.capturing) {
@@ -2168,6 +2556,7 @@ async function startCaptureSystem() {
         if (captionManager.ensureObserverHealth()) {
             Logger.info("Observer is already healthy - reusing existing observer");
             captionManager.capturing = true;
+            captionManager.retryCount = 0; // Reset retry counter on successful capture
             
             // Start the hybrid capture system if not already running
             if (captionManager.captureMode === 'snapshot' && !captionManager.snapshotCheckTimer) {
@@ -2204,6 +2593,7 @@ async function startCaptureSystem() {
         }
         
         captionManager.capturing = true;
+        captionManager.retryCount = 0; // Reset retry counter on successful capture
         
         // Add cleanup function
         captionManager.cleanupFunctions.push(() => captionManager.cleanupCaptureResources());
@@ -2359,7 +2749,7 @@ function getStateSpecificMessage(state) {
 
 // Notification cooldown tracking to prevent spam during calls
 const notificationCooldowns = new Map();
-const NOTIFICATION_COOLDOWN_MS = 30000; // 30 seconds cooldown
+const NOTIFICATION_COOLDOWN_MS = () => config.get('UI.NOTIFICATION_COOLDOWN_MS');
 
 /**
  * Show state transition progress to user with cooldown protection
@@ -2382,13 +2772,28 @@ function showStateTransitionProgress(fromState, toState) {
         const now = Date.now();
         const lastNotificationTime = notificationCooldowns.get(toState) || 0;
         
-        if (now - lastNotificationTime >= NOTIFICATION_COOLDOWN_MS) {
+        if (now - lastNotificationTime >= NOTIFICATION_COOLDOWN_MS()) {
             // Special handling for meeting states during calls to reduce interruption
-            let duration = 3000; // Default 3 seconds
+            let duration = config.get('UI.NOTIFICATION_DURATION.INFO'); // Default from config
             
             // Reduce popup time for states that might repeat during calls
             if (toState === MEETING_STATES.MEETING_ACTIVE) {
-                duration = 2000; // Shorter popup for meeting active states
+                duration = Math.min(duration, 2000); // Shorter popup for meeting active states
+            }
+            
+            // Use appropriate duration based on message type
+            switch (message.type) {
+                case 'success':
+                    duration = config.get('UI.NOTIFICATION_DURATION.SUCCESS');
+                    break;
+                case 'warning':
+                    duration = config.get('UI.NOTIFICATION_DURATION.WARNING');
+                    break;
+                case 'error':
+                    duration = config.get('UI.NOTIFICATION_DURATION.ERROR');
+                    break;
+                default:
+                    duration = config.get('UI.NOTIFICATION_DURATION.INFO');
             }
             
             showUserNotification(message.text, message.type, duration);
@@ -2416,7 +2821,7 @@ function showDetailedStatus(status, details) {
  */
 function enforceMemoryLimits() {
     // Check if we're approaching the auto-save threshold
-    if (transcriptArray.length >= AUTO_SAVE_THRESHOLD && transcriptArray.length % 1000 === 0) {
+    if (transcriptArray.length >= AUTO_SAVE_THRESHOLD() && transcriptArray.length % 1000 === 0) {
         // Warn user and offer auto-save to prevent loss (single popup instead of notification + confirm)
         const shouldAutoSave = confirm(
             `You have ${transcriptArray.length} captions captured! ` +
@@ -2464,7 +2869,7 @@ function enforceMemoryLimits() {
     }
     
     // CRITICAL: Only enforce hard limit at much higher threshold and with user warning
-    if (transcriptArray.length > MAX_TRANSCRIPT_ENTRIES) {
+    if (transcriptArray.length > MAX_TRANSCRIPT_ENTRIES()) {
         Logger.warn(`CRITICAL: Transcript array has reached ${transcriptArray.length} entries`);
         showUserNotification(
             `CRITICAL: You have ${transcriptArray.length} captions! ` +
@@ -2479,9 +2884,9 @@ function enforceMemoryLimits() {
     }
     
     // Limit recentlyRemoved array size (this is safe to trim as it's just for recovery)
-    if (recentlyRemoved.length > MAX_RECENTLY_REMOVED) {
-        recentlyRemoved.splice(MAX_RECENTLY_REMOVED);
-        Logger.debug(`Trimmed recentlyRemoved array to ${MAX_RECENTLY_REMOVED} entries`);
+    if (recentlyRemoved.length > MAX_RECENTLY_REMOVED()) {
+        recentlyRemoved.splice(MAX_RECENTLY_REMOVED());
+        Logger.debug(`Trimmed recentlyRemoved array to ${MAX_RECENTLY_REMOVED()} entries`);
     }
 }
 
@@ -2904,7 +3309,67 @@ function runComprehensiveTests() {
         return allHandled;
     });
     
-    // Test 18: Resource leak detection
+    // Test 18: ConfigManager functionality
+    test('ConfigManager functionality', () => {
+        // Test basic get/set functionality
+        const originalValue = config.get('CAPTIONS.DEBOUNCE_DELAY');
+        const testValue = originalValue + 100;
+        
+        config.set('CAPTIONS.DEBOUNCE_DELAY', testValue);
+        const retrievedValue = config.get('CAPTIONS.DEBOUNCE_DELAY');
+        
+        // Restore original value
+        config.set('CAPTIONS.DEBOUNCE_DELAY', originalValue);
+        
+        // Test configuration validation
+        let validationFailed = false;
+        try {
+            config.set('INVALID.PATH', 123);
+        } catch (error) {
+            validationFailed = true;
+        }
+        
+        return retrievedValue === testValue && validationFailed;
+    });
+    
+    // Test 19: Safe state transitions
+    test('Safe state transitions', () => {
+        const originalState = captionManager.meetingState;
+        
+        // Test normal transition
+        const result1 = captionManager.transitionToState(MEETING_STATES.JOINING, 'Test transition');
+        const newState1 = captionManager.meetingState;
+        
+        // Test concurrent transition (should be queued)
+        captionManager.isTransitioning = true; // Simulate active transition
+        const result2 = captionManager.transitionToState(MEETING_STATES.PRE_MEETING, 'Concurrent test');
+        const queueLength = captionManager.getPendingTransitionCount();
+        captionManager.isTransitioning = false; // Reset
+        
+        // Restore original state
+        captionManager.transitionToState(originalState, 'Test cleanup', true);
+        
+        return result1 === true && 
+               newState1 === MEETING_STATES.JOINING && 
+               result2 === false && 
+               queueLength > 0;
+    });
+    
+    // Test 20: Dynamic constants
+    test('Dynamic constants', () => {
+        // Test that constants are functions that use config
+        const debounceDelay1 = DEBOUNCE_DELAY();
+        config.set('CAPTIONS.DEBOUNCE_DELAY', debounceDelay1 + 50);
+        const debounceDelay2 = DEBOUNCE_DELAY();
+        
+        // Restore original
+        config.set('CAPTIONS.DEBOUNCE_DELAY', debounceDelay1);
+        
+        return typeof DEBOUNCE_DELAY === 'function' && 
+               debounceDelay2 === debounceDelay1 + 50;
+    });
+    
+    // Test 21: Resource leak detection
     test('Resource leak detection', () => {
         const initialTimers = setTimeout(() => {}, 0); // Get current timer count approximation
         clearTimeout(initialTimers);
@@ -2985,13 +3450,13 @@ function attemptCrashRecovery() {
  * Enhanced observer reliability with state-aware grace periods
  */
 function ensureObserverReliability() {
-    // State-specific health check intervals
+    // State-specific health check intervals from configuration
     const healthCheckIntervals = {
-        [MEETING_STATES.CHAT]: 60000,           // 1 minute - low frequency
-        [MEETING_STATES.JOINING]: 15000,        // 15 seconds - frequent during transition
-        [MEETING_STATES.PRE_MEETING]: 30000,    // 30 seconds - moderate frequency
-        [MEETING_STATES.MEETING_ACTIVE]: 20000, // 20 seconds - more frequent in meeting
-        [MEETING_STATES.CAPTIONS_READY]: 30000  // 30 seconds - standard monitoring
+        [MEETING_STATES.CHAT]: config.get('HEALTH.CHECK_INTERVALS.CHAT'),
+        [MEETING_STATES.JOINING]: config.get('HEALTH.CHECK_INTERVALS.JOINING'),
+        [MEETING_STATES.PRE_MEETING]: config.get('HEALTH.CHECK_INTERVALS.PRE_MEETING'),
+        [MEETING_STATES.MEETING_ACTIVE]: config.get('HEALTH.CHECK_INTERVALS.MEETING_ACTIVE'),
+        [MEETING_STATES.CAPTIONS_READY]: config.get('HEALTH.CHECK_INTERVALS.CAPTIONS_READY')
     };
     
     let currentInterval = null;
@@ -3078,7 +3543,7 @@ function checkCaptionFlow() {
         "[data-tid='closed-captions-renderer'] .fui-ChatMessageCompact"
     );
     
-    const captionFlowStoppedThreshold = 5 * 60 * 1000; // 5 minutes
+    const captionFlowStoppedThreshold = config.get('HEALTH.CAPTION_FLOW_TIMEOUT');
     
     // If we haven't captured captions in 5 minutes but DOM shows captions exist, there's an issue
     if (timeSinceLastCaption > captionFlowStoppedThreshold && captionElements.length > 0) {
@@ -3181,6 +3646,8 @@ Logger.info(`Meeting ID: ${captionManager.currentMeetingId || 'not detected'}`);
 Logger.info(`Initial state: ${captionManager.meetingState}`);
 Logger.info(`URL: ${window.location.href}`);
 Logger.info(`Timestamp: ${new Date().toISOString()}`);
+Logger.info(`Configuration loaded: ${Object.keys(config.dump()).length} settings`);
+Logger.info(`Debug mode: ${config.get('DEBUG.LOG_LEVEL')}`);
 Logger.info('==============================================================');
 
 // Run tests only if in development mode (check for console availability and development indicators)
@@ -3204,6 +3671,13 @@ if (typeof console !== 'undefined' &&
             Logger.warn(`⚠️ ${testResults.failed} tests failed. Please review before deployment.`);
         }
     }, 1000);
+}
+
+// Expose configuration for debugging (only in debug mode)
+if (config.get('DEBUG.LOG_LEVEL') === 'DEBUG') {
+    window.captionSaverConfig = config;
+    window.captionManager = captionManager;
+    Logger.info('Debug objects exposed: window.captionSaverConfig, window.captionManager');
 }
 
 // Add cleanup on page unload to prevent memory leaks
