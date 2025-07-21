@@ -11,7 +11,12 @@
       "Bash(git add:*)",
       "Bash(git config:*)",
       "Bash(git push:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(rm:*)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:www.linkedin.com)",
+      "Bash(ls:*)",
+      "Bash(wc:*)"
     ],
     "deny": []
   }
