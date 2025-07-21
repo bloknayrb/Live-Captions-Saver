@@ -2357,8 +2357,12 @@ function getStateSpecificMessage(state) {
     };
 }
 
+// Notification cooldown tracking to prevent spam during calls
+const notificationCooldowns = new Map();
+const NOTIFICATION_COOLDOWN_MS = 30000; // 30 seconds cooldown
+
 /**
- * Show state transition progress to user
+ * Show state transition progress to user with cooldown protection
  * @param {string} fromState - Previous state
  * @param {string} toState - New state
  */
@@ -2374,8 +2378,25 @@ function showStateTransitionProgress(fromState, toState) {
     ].includes(toState);
     
     if (shouldShowTransition) {
-        showUserNotification(message.text, message.type, 3000);
-        Logger.info(`State transition notification: ${fromState} → ${toState}`);
+        // Check cooldown to prevent repeated notifications for same state
+        const now = Date.now();
+        const lastNotificationTime = notificationCooldowns.get(toState) || 0;
+        
+        if (now - lastNotificationTime >= NOTIFICATION_COOLDOWN_MS) {
+            // Special handling for meeting states during calls to reduce interruption
+            let duration = 3000; // Default 3 seconds
+            
+            // Reduce popup time for states that might repeat during calls
+            if (toState === MEETING_STATES.MEETING_ACTIVE) {
+                duration = 2000; // Shorter popup for meeting active states
+            }
+            
+            showUserNotification(message.text, message.type, duration);
+            notificationCooldowns.set(toState, now);
+            Logger.info(`State transition notification: ${fromState} → ${toState}`);
+        } else {
+            Logger.debug(`Notification cooldown active for ${toState} (${Math.round((now - lastNotificationTime) / 1000)}s since last)`);
+        }
     }
 }
 
