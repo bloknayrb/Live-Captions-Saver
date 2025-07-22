@@ -2518,7 +2518,7 @@ function startTranscription() {
     } catch (error) {
         Logger.error('Error in startTranscription:', error);
         showUserNotification('Failed to start caption capturing. Please refresh the page and try again.', 'error');
-        scheduleNextCheck(10000); // Retry in 10 seconds on error
+        scheduleNextCheck(10000, true); // Retry in 10 seconds on error
         return false;
     }
 }
@@ -2526,16 +2526,19 @@ function startTranscription() {
 /**
  * Schedule next transcription check
  * @param {number} delay - Delay in milliseconds
+ * @param {boolean} isRetry - Whether this is a retry due to failure (default: false)
  */
-function scheduleNextCheck(delay) {
-    // Prevent infinite loops with retry counter
-    captionManager.retryCount = (captionManager.retryCount || 0) + 1;
-    
-    if (captionManager.retryCount > 20) {
-        Logger.error('Too many startTranscription retries (20+), stopping to prevent infinite loop');
-        Logger.error(`Current state: ${captionManager.meetingState}, capturing: ${captionManager.capturing}`);
-        showUserNotification('Caption system stopped due to repeated failures. Please refresh the page.', 'error');
-        return;
+function scheduleNextCheck(delay, isRetry = false) {
+    // Only increment retry counter for actual failures, not normal state monitoring
+    if (isRetry) {
+        captionManager.retryCount = (captionManager.retryCount || 0) + 1;
+        
+        if (captionManager.retryCount > 20) {
+            Logger.error('Too many startTranscription retries (20+), stopping to prevent infinite loop');
+            Logger.error(`Current state: ${captionManager.meetingState}, capturing: ${captionManager.capturing}`);
+            showUserNotification('Caption system stopped due to repeated failures. Please refresh the page.', 'error');
+            return;
+        }
     }
     
     setTimeout(() => {
@@ -3681,7 +3684,28 @@ if (config.get('DEBUG.LOG_LEVEL') === 'DEBUG') {
 }
 
 // Add cleanup on page unload to prevent memory leaks
-window.addEventListener('beforeunload', cleanupAll);
+// Allow brief delay to capture final captions before cleanup
+window.addEventListener('beforeunload', (event) => {
+    // Force a final processing cycle to capture any pending captions
+    if (captionManager.capturing && captionManager.observer) {
+        try {
+            captionManager.processNewCaptions();
+            
+            // Force a final backup to preserve last captions
+            if (captionManager.transcriptArray.length > 0) {
+                captionManager.backupToLocalStorage();
+                Logger.info('Final backup completed before page unload');
+            }
+        } catch (error) {
+            Logger.warn('Error during final caption processing:', error);
+        }
+    }
+    
+    // Small delay for final caption capture, then cleanup
+    setTimeout(() => {
+        cleanupAll();
+    }, 100);
+});
 window.addEventListener('unload', cleanupAll);
 
 // Add cleanup function for navigation events
