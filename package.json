@@ -1,6 +1,6 @@
 {
   "name": "ms-teams-captions-saver",
-  "version": "3.6.2",
+  "version": "4.0.0",
   "description": "Chrome extension for capturing MS Teams live captions",
   "main": "code-analysis-test.js",
   "scripts": {
