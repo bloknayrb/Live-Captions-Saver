@@ -18,7 +18,7 @@
       "https://teams.microsoft.com/*"
   ],
   "background": {
-    "service_worker": "service_worker.js"
+    "service_worker": "dist/service_worker.bundle.js"
   },
   "action": {
     "default_icon": "icon.png",
@@ -28,7 +28,7 @@
   "content_scripts": [
     {
       "matches": ["https://teams.microsoft.com/*"],
-      "js": ["content_script.js"]
+      "js": ["dist/content_script.bundle.js"]
     }
   ]
 }

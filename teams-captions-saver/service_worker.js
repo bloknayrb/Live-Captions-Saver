@@ -3,27 +3,46 @@
 // Service worker script will be forcefully terminated after about 30 seconds of inactivity, and restarted when it's next needed.
 // https://stackoverflow.com/questions/66618136/persistent-service-worker-in-chrome-extension/66618269#66618269
 
-// This code is not used. But without it, the extension does not work
-let isTranscribing = false;
-let transcriptArray = [];
+/**
+ * MS Teams Captions Saver - Service Worker
+ * Handles download and viewer tab creation for captured captions
+ */
 
-function jsonToYaml(json) {
+/**
+ * Converts transcript array to YAML-like text format
+ * @param {Array} json - Array of transcript objects with Name, Text, Time properties
+ * @returns {string} Formatted text string
+ */
+function formatTranscripts(json) {
     return json.map(entry => {
         return `Name: ${entry.Name}\nText: ${entry.Text}\nTime: ${entry.Time}\n----`;
     }).join('\n');
 }
 
+/**
+ * Downloads transcripts as a text file
+ * @param {string} meetingTitle - Title for the downloaded file
+ * @param {Array} transcriptArray - Array of transcript objects
+ */
 function saveTranscripts(meetingTitle, transcriptArray) {
-    const yaml = jsonToYaml(transcriptArray);
-    console.log(yaml);
+    try {
+        const formattedText = formatTranscripts(transcriptArray);
+        console.log('Downloading transcripts:', formattedText);
 
-    chrome.downloads.download({
-        url: 'data:text/plain;charset=utf-8,' + encodeURIComponent(yaml),
-        filename: meetingTitle + ".txt",
-        saveAs: true
-    });
+        chrome.downloads.download({
+            url: 'data:text/plain;charset=utf-8,' + encodeURIComponent(formattedText),
+            filename: meetingTitle + ".txt",
+            saveAs: true
+        });
+    } catch (error) {
+        console.error('Error saving transcripts:', error);
+    }
 }
 
+/**
+ * Creates a new tab with formatted captions for viewing
+ * @param {Array} transcriptArray - Array of transcript objects
+ */
 function createViewerTab(transcriptArray) {
     // Create a data URL containing the HTML content for viewing captions
     const htmlContent = `
@@ -86,27 +105,40 @@ function createViewerTab(transcriptArray) {
         </html>
     `;
     
-    // Create a new tab with this HTML content
-    chrome.tabs.create({
-        url: 'data:text/html;charset=utf-8,' + encodeURIComponent(htmlContent)
-    });
+    try {
+        // Create a new tab with the formatted HTML content
+        chrome.tabs.create({
+            url: 'data:text/html;charset=utf-8,' + encodeURIComponent(htmlContent)
+        });
+    } catch (error) {
+        console.error('Error creating viewer tab:', error);
+    }
 }
 
+/**
+ * Message listener for communication with content script
+ * Handles 'download_captions' and 'display_captions' messages
+ */
 chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
-    console.log("Service worker received message:", message);
+    console.log("Service worker received message:", message.message);
     
-    switch (message.message) {
-        case 'download_captions': // message from Content script
-            console.log('download_captions triggered!', message);
-            saveTranscripts(message.meetingTitle, message.transcriptArray);
-            break;
+    try {
+        switch (message.message) {
+            case 'download_captions':
+                console.log('Processing download request for:', message.meetingTitle);
+                saveTranscripts(message.meetingTitle, message.transcriptArray);
+                break;
 
-        case 'display_captions': // message from Content script with captions for viewing
-            console.log('display_captions triggered!', message);
-            createViewerTab(message.transcriptArray);
-            break;
+            case 'display_captions':
+                console.log('Creating viewer tab for', message.transcriptArray.length, 'captions');
+                createViewerTab(message.transcriptArray);
+                break;
 
-        default:
-            break;
+            default:
+                console.warn('Unknown message type:', message.message);
+                break;
+        }
+    } catch (error) {
+        console.error('Error handling message:', error);
     }
 });

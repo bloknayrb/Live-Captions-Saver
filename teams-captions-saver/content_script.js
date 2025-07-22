@@ -139,9 +139,9 @@ window.CaptionSaver.DOMUtils = {
             
             // Primary author extraction strategy
             const config = window.CaptionSaver.Config;
-            let transcript = this.safeClosest(textElement, config.SELECTORS.CHAT_MESSAGE);
+            const transcript = this.safeClosest(textElement, config.SELECTORS.CHAT_MESSAGE);
             if (transcript) {
-                let authorElement = this.safeQuerySelector(transcript, config.SELECTORS.AUTHOR);
+                const authorElement = this.safeQuerySelector(transcript, config.SELECTORS.AUTHOR);
                 if (authorElement) {
                     result.name = this.safeExtractText(authorElement);
                 }
@@ -986,7 +986,7 @@ window.CaptionSaver.Controller = {
 
                 const orderedForDownload = captionProcessor.sortTranscriptsByScreenOrder();
                 
-                let meetingTitle = document.title.replace("__Microsoft_Teams", '').replace(/[^a-z0-9 ]/gi, '');
+                const meetingTitle = document.title.replace("__Microsoft_Teams", '').replace(/[^a-z0-9 ]/gi, '');
                 chrome.runtime.sendMessage({
                     message: "download_captions",
                     transcriptArray: orderedForDownload.map(({ID, ...rest}) => rest),

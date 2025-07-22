@@ -1,18 +1,18 @@
 const transcriptArray = [];
 let capturing = false;
 let observer = null;
-let transcriptIdCounter = 0; // Since IDs are not reliable in new structure
-let processedCaptions = new Set(); // Track captions we've already processed
+const transcriptIdCounter = 0; // Since IDs are not reliable in new structure
+const processedCaptions = new Set(); // Track captions we've already processed
 let lastCaptionTime = 0; // Track when we last saw a caption change (0 = never)
 let silenceCheckTimer = null; // Timer to check for silence periods
 let lastCaptionSnapshot = ''; // Track the actual content to detect real changes
-let captionElementTracking = new Map(); // Track caption elements for update detection
+const captionElementTracking = new Map(); // Track caption elements for update detection
 let processingThrottle = null; // Throttle processing during high activity
 let lastProcessingTime = 0; // Track when we last processed captions
-let processingStats = { runs: 0, totalTime: 0, throttledCalls: 0 }; // Performance monitoring
+const processingStats = { runs: 0, totalTime: 0, throttledCalls: 0 }; // Performance monitoring
 let fallbackTimer = null; // Track fallback timer to prevent leaks
-let meetingDetectionCache = { result: false, timestamp: 0, cacheDuration: 30000 }; // Cache meeting detection for 30 seconds
-let processingState = { // State management for concurrent operations
+const meetingDetectionCache = { result: false, timestamp: 0, cacheDuration: 30000 }; // Cache meeting detection for 30 seconds
+const processingState = { // State management for concurrent operations
     isProcessing: false,
     isSilenceDetection: false,
     isForceCapture: false,
@@ -205,9 +205,9 @@ function extractCaptionData(textElement) {
         if (!result.text) return null;
         
         // Primary author extraction strategy
-        let transcript = safeClosest(textElement, '.fui-ChatMessageCompact');
+        const transcript = safeClosest(textElement, '.fui-ChatMessageCompact');
         if (transcript) {
-            let authorElement = safeQuerySelector(transcript, '[data-tid="author"]');
+            const authorElement = safeQuerySelector(transcript, '[data-tid="author"]');
             if (authorElement) {
                 result.name = safeExtractText(authorElement);
             }
@@ -847,7 +847,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             // Sort transcripts by the order they appear on screen (not by capture time)
             const orderedForDownload = sortTranscriptsByScreenOrder();
             
-            let meetingTitle = document.title.replace("__Microsoft_Teams", '').replace(/[^a-z0-9 ]/gi, '');
+            const meetingTitle = document.title.replace("__Microsoft_Teams", '').replace(/[^a-z0-9 ]/gi, '');
             chrome.runtime.sendMessage({
                 message: "download_captions",
                 transcriptArray: orderedForDownload.map(({ID, ...rest}) => rest), // Remove ID property
