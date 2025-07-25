@@ -16,7 +16,8 @@
       "WebFetch(domain:api.github.com)",
       "WebFetch(domain:www.linkedin.com)",
       "Bash(ls:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(git fetch:*)"
     ],
     "deny": []
   }
