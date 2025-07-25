@@ -1,0 +1,39 @@
+{
+  "name": "ms-teams-captions-saver",
+  "version": "4.0.0",
+  "description": "Chrome extension for capturing MS Teams live captions",
+  "main": "code-analysis-test.js",
+  "scripts": {
+    "test": "jest",
+    "lint": "eslint teams-captions-saver/ Standalone-scripts/",
+    "lint:fix": "eslint teams-captions-saver/ Standalone-scripts/ --fix",
+    "build": "webpack --mode=production",
+    "dev": "webpack --mode=development --watch",
+    "format": "prettier --write ."
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Zerg00s/Live-Captions-Saver.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Zerg00s/Live-Captions-Saver/issues"
+  },
+  "homepage": "https://github.com/Zerg00s/Live-Captions-Saver#readme",
+  "devDependencies": {
+    "@babel/core": "^7.28.0",
+    "@babel/preset-env": "^7.28.0",
+    "@eslint/js": "^9.31.0",
+    "babel-loader": "^10.0.0",
+    "eslint": "^9.31.0",
+    "jest": "^30.0.5",
+    "jest-environment-jsdom": "^30.0.5",
+    "jsdom": "^26.1.0",
+    "prettier": "^3.6.2",
+    "webpack": "^5.100.2",
+    "webpack-cli": "^6.0.1"
+  }
+}

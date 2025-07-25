@@ -1,3838 +1,1211 @@
-// Meeting state constants
-const MEETING_STATES = {
-    CHAT: 'chat',                    // In Teams chat/general interface
-    JOINING: 'joining',              // Meeting join process started
-    PRE_MEETING: 'pre_meeting',      // In meeting lobby/waiting
-    MEETING_ACTIVE: 'meeting_active', // In active meeting
-    CAPTIONS_READY: 'captions_ready' // Captions container available
+// ========================================================================
+// MS Teams Live Captions Saver - Modular Architecture
+// ========================================================================
+
+// Create main namespace
+window.CaptionSaver = window.CaptionSaver || {};
+
+// ========================================================================
+// CONFIG MODULE - All constants and configuration
+// ========================================================================
+window.CaptionSaver.Config = {
+    // Message types for validation
+    VALID_MESSAGES: Object.freeze([
+        'return_transcript',
+        'get_captions_for_viewing', 
+        'clear_transcript'
+    ]),
+    
+    // Error contexts for better debugging
+    ERROR_CONTEXTS: Object.freeze({
+        MESSAGE_VALIDATION: 'message-validation',
+        MESSAGE_HANDLER: 'message-handler',
+        CLEAR_TRANSCRIPT: 'clear-transcript',
+        CAPTION_PROCESSING: 'caption-processing',
+        DOM_OPERATIONS: 'dom-operations',
+        MEMORY_MANAGEMENT: 'memory-management'
+    }),
+    
+    SIMILARITY_THRESHOLDS: {
+        UPDATE_DETECTION: 0.7,      // Minimum similarity to consider caption an update
+        HIGH_SIMILARITY: 0.85,      // High similarity threshold for updates
+        DUPLICATE_DETECTION: 0.9    // Very high similarity for duplicate detection
+    },
+    TIMING: {
+        DEBOUNCE_INTERVAL: 500,           // Minimum ms between processing runs
+        SILENCE_TIMEOUT: 5000,            // Ms to wait before considering silence
+        SILENCE_TIMER_OFFSET: 4500,       // Slightly less than silence timeout
+        MEMORY_CLEANUP_INTERVAL: 60000,   // Memory cleanup frequency (60 seconds)
+        FALLBACK_TIMER_INTERVAL: 3000,    // Fallback processing check interval
+        PERIODIC_CHECK_INTERVAL: 1000,    // Periodic silence check interval
+        DEFER_RETRY_DELAY: 1000,          // Delay for deferred operations
+        MEETING_CACHE_DURATION: 30000     // Meeting detection cache duration
+    },
+    MEMORY: {
+        MAX_TRACKING_ENTRIES: 1000,     // Maximum caption tracking entries
+        TRACKING_DATA_MAX_AGE: 300000,  // 5 minutes for tracking data
+        RECENT_TRANSCRIPTS_LIMIT: 20,   // Number of recent transcripts to check for duplicates
+        STABILITY_BUFFER: 2,            // Number of recent captions to skip for stability
+        MIN_CAPTIONS_REQUIRED: 3        // Minimum captions needed before processing
+    },
+    PERFORMANCE: {
+        MAX_WORD_LENGTH_FILTER: 2,      // Minimum word length for similarity comparison
+        PERFORMANCE_LOG_FREQUENCY: 60   // How often to log performance stats (cleanup cycles)
+    },
+    SELECTORS: {
+        PRIMARY_CAPTION: '[data-tid="closed-caption-text"]',
+        CAPTIONS_CONTAINER: '[data-tid="closed-captions-renderer"]',
+        CHAT_MESSAGE: '.fui-ChatMessageCompact',
+        AUTHOR: '[data-tid="author"]',
+        FALLBACK_CAPTIONS: [
+            '[class*="closed-caption"]',
+            '[class*="caption-text"]',
+            '[class*="CaptionText"]',
+            '[aria-label*="caption"]',
+            '[role="log"] [class*="text"]'
+        ],
+        MEETING_INDICATORS: {
+            CALL_DURATION: '#call-duration-custom',
+            CALL_STATUS_CONTAINER: '[data-tid="call-status-container-test-id"]',
+            CALL_STATUS: '#call-status'
+        }
+    }
 };
 
-/**
- * Centralized configuration management system
- * Supports runtime updates, environment-specific configs, and user preferences
- */
-class ConfigManager {
-    constructor() {
-        this.config = this._getDefaultConfig();
-        this.overrides = new Map();
-        this.listeners = new Map();
-        
-        // Load saved user preferences
-        this._loadUserPreferences();
-        
-        // Load environment-specific overrides
-        this._loadEnvironmentConfig();
-    }
-    
-    /**
-     * Get default configuration values
-     * @private
-     */
-    _getDefaultConfig() {
-        return {
-            // State Transition Timeouts
-            TRANSITIONS: {
-                CHAT_TO_JOINING: 5000,
-                JOINING_TO_PRE_MEETING: 15000,
-                PRE_MEETING_TO_ACTIVE: 30000,
-                ACTIVE_TO_CAPTIONS_READY: 45000,
-                GRACE_PERIOD: 60000,
-                MAX_TRANSITION_QUEUE_SIZE: 5
-            },
-            
-            // Caption Processing
-            CAPTIONS: {
-                STABILITY_DELAY: 4000,
-                MIN_FOR_STABILITY: 3,
-                DEBOUNCE_DELAY: 300,
-                EMERGENCY_THRESHOLD: 50,
-                SNAPSHOT_CHECK_INTERVAL: 1000,
-                FALLBACK_TIMEOUT: 10000
-            },
-            
-            // Memory Management
-            MEMORY: {
-                MAX_TRANSCRIPT_ENTRIES: 10000,
-                AUTO_SAVE_THRESHOLD: 5000,
-                MEMORY_CHECK_INTERVAL: 100,
-                BACKUP_FREQUENCY: 100,
-                BACKUP_RETENTION_COUNT: 500,
-                BACKUP_EXPIRY_HOURS: 4,
-                MAX_RECENTLY_REMOVED: 10
-            },
-            
-            // Health Monitoring
-            HEALTH: {
-                CHECK_INTERVALS: {
-                    CHAT: 60000,
-                    JOINING: 15000,
-                    PRE_MEETING: 30000,
-                    MEETING_ACTIVE: 20000,
-                    CAPTIONS_READY: 30000
-                },
-                CAPTION_FLOW_TIMEOUT: 5 * 60 * 1000, // 5 minutes
-                MAX_RETRIES: 3,
-                RETRY_BACKOFF_MS: 1000
-            },
-            
-            // User Interface
-            UI: {
-                NOTIFICATION_COOLDOWN_MS: 30000,
-                NOTIFICATION_DURATION: {
-                    INFO: 3000,
-                    SUCCESS: 5000,
-                    WARNING: 8000,
-                    ERROR: 15000
-                }
-            },
-            
-            // Development/Debug
-            DEBUG: {
-                ENABLE_COMPREHENSIVE_TESTS: true,
-                LOG_LEVEL: 'INFO', // DEBUG, INFO, WARN, ERROR
-                PERFORMANCE_MONITORING: false,
-                TELEMETRY_ENABLED: false
-            },
-            
-            // Progressive Detection
-            PROGRESSIVE: {
-                CHECK_LOOKBACK: 5,
-                MIN_TEXT_LENGTH_FOR_ANALYSIS: 1,
-                MIN_PREFIX_EXPANSION_LENGTH: 2,
-                SAFE_REMOVAL_RECENT_ENTRIES: 3
-            }
-        };
-    }
-    
-    /**
-     * Get configuration value using dot notation
-     * @param {string} path - Configuration path (e.g., 'TRANSITIONS.GRACE_PERIOD')
-     * @returns {*} Configuration value
-     */
-    get(path) {
-        // Check for overrides first
-        if (this.overrides.has(path)) {
-            return this.overrides.get(path);
-        }
-        
-        // Navigate through nested object
-        const keys = path.split('.');
-        let current = this.config;
-        
-        for (const key of keys) {
-            if (current === null || current === undefined) {
-                console.warn(`Configuration path not found: ${path}`);
-                return undefined;
-            }
-            current = current[key];
-        }
-        
-        return current;
-    }
-    
-    /**
-     * Set configuration value with validation
-     * @param {string} path - Configuration path
-     * @param {*} value - New value
-     * @param {boolean} persist - Save to localStorage
-     */
-    set(path, value, persist = false) {
-        // Validate the path exists in default config
-        if (this.get(path) === undefined) {
-            throw new Error(`Invalid configuration path: ${path}`);
-        }
-        
-        const oldValue = this.get(path);
-        
-        // Type validation
-        if (typeof value !== typeof oldValue) {
-            throw new Error(`Type mismatch for ${path}: expected ${typeof oldValue}, got ${typeof value}`);
-        }
-        
-        // Set override
-        this.overrides.set(path, value);
-        
-        // Persist to localStorage if requested
-        if (persist) {
-            this._saveUserPreference(path, value);
-        }
-        
-        // Notify listeners
-        this._notifyListeners(path, value, oldValue);
-        
-        console.info(`Configuration updated: ${path} = ${value} (was: ${oldValue})`);
-    }
-    
-    /**
-     * Listen for configuration changes
-     * @param {string} path - Configuration path to watch
-     * @param {Function} callback - Callback function
-     */
-    onChange(path, callback) {
-        if (!this.listeners.has(path)) {
-            this.listeners.set(path, []);
-        }
-        this.listeners.get(path).push(callback);
-    }
-    
-    /**
-     * Load user preferences from localStorage
-     * @private
-     */
-    _loadUserPreferences() {
+// ========================================================================
+// DOM UTILS MODULE - Safe DOM operations and element handling
+// ========================================================================
+window.CaptionSaver.DOMUtils = {
+    // Safe DOM operation wrappers
+    safeQuerySelector(element, selector) {
         try {
-            const preferences = localStorage.getItem('caption_saver_config');
-            if (preferences) {
-                const parsed = JSON.parse(preferences);
-                Object.entries(parsed).forEach(([path, value]) => {
-                    this.overrides.set(path, value);
-                });
-                console.info(`Loaded ${Object.keys(parsed).length} user preferences`);
-            }
+            return element ? element.querySelector(selector) : null;
         } catch (error) {
-            console.warn('Failed to load user preferences:', error);
+            console.warn(`Safe query selector failed for "${selector}":`, error);
+            return null;
         }
-    }
-    
-    /**
-     * Load environment-specific configuration
-     * @private
-     */
-    _loadEnvironmentConfig() {
-        const isDebug = new URLSearchParams(window.location.search).has('debug') || 
-                       localStorage.getItem('caption_saver_debug') === 'true';
-        
-        if (isDebug) {
-            this.set('DEBUG.LOG_LEVEL', 'DEBUG');
-            this.set('DEBUG.PERFORMANCE_MONITORING', true);
-            this.set('CAPTIONS.DEBOUNCE_DELAY', 100); // Faster response in debug
-            console.info('Debug mode configuration loaded');
-        }
-        
-        // Production optimizations
-        if (window.location.hostname === 'teams.microsoft.com') {
-            this.set('HEALTH.CHECK_INTERVALS.MEETING_ACTIVE', 15000); // More frequent in production
-            this.set('MEMORY.AUTO_SAVE_THRESHOLD', 3000); // More aggressive auto-save
-        }
-    }
-    
-    /**
-     * Save user preference to localStorage
-     * @private
-     */
-    _saveUserPreference(path, value) {
-        try {
-            const preferences = JSON.parse(localStorage.getItem('caption_saver_config') || '{}');
-            preferences[path] = value;
-            localStorage.setItem('caption_saver_config', JSON.stringify(preferences));
-        } catch (error) {
-            console.warn('Failed to save user preference:', error);
-        }
-    }
-    
-    /**
-     * Notify configuration change listeners
-     * @private
-     */
-    _notifyListeners(path, newValue, oldValue) {
-        if (this.listeners.has(path)) {
-            this.listeners.get(path).forEach(callback => {
-                try {
-                    callback(newValue, oldValue, path);
-                } catch (error) {
-                    console.error('Configuration listener error:', error);
-                }
-            });
-        }
-    }
-    
-    /**
-     * Reset configuration to defaults
-     */
-    reset() {
-        this.overrides.clear();
-        localStorage.removeItem('caption_saver_config');
-        console.info('Configuration reset to defaults');
-    }
-    
-    /**
-     * Get current configuration as JSON for debugging
-     */
-    dump() {
-        const result = {};
-        const traverse = (obj, prefix = '') => {
-            Object.keys(obj).forEach(key => {
-                const path = prefix ? `${prefix}.${key}` : key;
-                const value = obj[key];
-                if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-                    traverse(value, path);
-                } else {
-                    result[path] = this.get(path); // Get actual value including overrides
-                }
-            });
-        };
-        traverse(this.config);
-        return result;
-    }
-}
+    },
 
-// Global configuration instance
-const config = new ConfigManager();
+    safeQuerySelectorAll(selector) {
+        try {
+            return document.querySelectorAll(selector) || [];
+        } catch (error) {
+            console.warn(`Safe query selector all failed for "${selector}":`, error);
+            return [];
+        }
+    },
 
-// Dynamic accessors for existing constants
-const TRANSITION_TIMEOUTS = {
-    get CHAT_TO_JOINING() { return config.get('TRANSITIONS.CHAT_TO_JOINING'); },
-    get JOINING_TO_PRE_MEETING() { return config.get('TRANSITIONS.JOINING_TO_PRE_MEETING'); },
-    get PRE_MEETING_TO_ACTIVE() { return config.get('TRANSITIONS.PRE_MEETING_TO_ACTIVE'); },
-    get ACTIVE_TO_CAPTIONS_READY() { return config.get('TRANSITIONS.ACTIVE_TO_CAPTIONS_READY'); },
-    get GRACE_PERIOD() { return config.get('TRANSITIONS.GRACE_PERIOD'); }
-};
-
-/**
- * CaptionManager class - Encapsulates all caption capture state and operations
- */
-class CaptionManager {
-    constructor() {
-        // Core state
-        this.transcriptArray = [];
-        this.capturing = false;
-        this.observer = null;
-        this.transcriptIdCounter = 0;
-        
-        // Meeting management
-        this.currentMeetingId = null;
-        this.lastMeetingCheck = 0;
-        
-        // NEW: Transition state management
-        this.meetingState = MEETING_STATES.CHAT;
-        this.previousMeetingState = MEETING_STATES.CHAT;
-        this.stateTransitionTime = Date.now();
-        this.transitionGracePeriod = TRANSITION_TIMEOUTS.GRACE_PERIOD;
-        this.stateTransitionHistory = [];
-        
-        // Safe transition control
-        this.isTransitioning = false;
-        this.pendingTransitions = [];
-        this.retryCount = 0;
-        
-        // Race condition prevention
-        this.debounceTimer = null;
-        this.isProcessing = false;
-        this.cleanupFunctions = [];
-        
-        // Deduplication tracking
-        this.recentlyRemoved = [];
-        this.captionHashSet = new Set(); // For O(1) duplicate detection
-        
-        // Reliability tracking
-        this.lastCaptionTime = Date.now();
-        this.captionCount = 0;
-        
-        // Hybrid snapshot-based capture system (inspired by Zerg00s)
-        this.captureMode = 'snapshot'; // 'snapshot' or 'progressive' (fallback)
-        this.lastCaptionSnapshot = '';
-        this.silenceTimer = null;
-        this.snapshotCheckTimer = null;
-        this.lastSnapshotTime = Date.now();
-        this.pendingCaptionData = [];
-        this.fallbackModeStartTime = null;
-        this.snapshotFailureCount = 0;
-        
-        // Debug mode for comprehensive logging
-        this.debugMode = new URLSearchParams(window.location.search).has('debug') || 
-                        localStorage.getItem('caption_saver_debug') === 'true';
-    }
-    
-    /**
-     * Safe state transition with queuing and locking
-     * @param {string} newState - Target state
-     * @param {string} reason - Reason for transition
-     * @param {boolean} force - Force transition even if already in state
-     * @returns {boolean} True if transition executed successfully
-     */
-    transitionToState(newState, reason = 'Unknown', force = false) {
-        // Validate state parameter
-        if (!Object.values(MEETING_STATES).includes(newState)) {
-            Logger.error(`Invalid state transition requested: ${newState}`);
-            return false;
-        }
-        
-        // Check if transition is needed (unless forced)
-        if (!force && this.meetingState === newState) {
-            Logger.debug(`Already in state ${newState}, skipping transition`);
-            return false;
-        }
-        
-        // If currently transitioning, queue this request
-        if (this.isTransitioning) {
-            Logger.debug(`Queuing transition to ${newState} (currently transitioning)`);
-            
-            // Limit queue size to prevent memory issues
-            if (this.pendingTransitions.length >= config.get('TRANSITIONS.MAX_TRANSITION_QUEUE_SIZE')) {
-                Logger.warn('Transition queue full, dropping oldest transition');
-                this.pendingTransitions.shift();
-            }
-            
-            this.pendingTransitions.push({ 
-                newState, 
-                reason, 
-                force, 
-                timestamp: Date.now() 
-            });
-            return false;
-        }
-        
-        // Acquire transition lock
-        this.isTransitioning = true;
-        
+    safeExtractText(element) {
         try {
-            return this._executeTransition(newState, reason);
+            if (!element) return '';
+            return (element.innerText || element.textContent || '').trim();
         } catch (error) {
-            Logger.error('Error during state transition:', error);
-            return false;
-        } finally {
-            // Release lock and process queued transitions
-            this.isTransitioning = false;
-            this._processQueuedTransitions();
-        }
-    }
-    
-    /**
-     * Execute the actual state transition
-     * @private
-     * @param {string} newState - Target state
-     * @param {string} reason - Reason for transition
-     * @returns {boolean} True if successful
-     */
-    _executeTransition(newState, reason) {
-        const oldState = this.meetingState;
-        
-        Logger.info(`State transition: ${oldState} → ${newState} (${reason})`);
-        
-        // Update state atomically
-        this.previousMeetingState = oldState;
-        this.meetingState = newState;
-        this.stateTransitionTime = Date.now();
-        
-        // Track transition history
-        this.stateTransitionHistory.push({
-            from: oldState,
-            to: newState,
-            timestamp: this.stateTransitionTime,
-            reason: reason
-        });
-        
-        // Keep only last 10 transitions
-        if (this.stateTransitionHistory.length > 10) {
-            this.stateTransitionHistory.shift();
-        }
-        
-        // Enhanced debug logging
-        if (this.debugMode) {
-            Logger.debug(`State transition details:`, {
-                fromState: oldState,
-                toState: newState,
-                reason: reason,
-                timestamp: new Date(this.stateTransitionTime).toISOString(),
-                transitionCount: this.stateTransitionHistory.length,
-                meetingId: this.currentMeetingId,
-                captionCount: this.transcriptArray.length,
-                capturing: this.capturing,
-                url: window.location.href,
-                pendingTransitions: this.pendingTransitions.length
-            });
-        }
-        
-        // Show user transition progress
-        showStateTransitionProgress(oldState, newState);
-        
-        // Execute state-specific transition handlers
-        this.onStateTransition(oldState, newState, reason);
-        
-        return true;
-    }
-    
-    /**
-     * Process any queued transitions
-     * @private
-     */
-    _processQueuedTransitions() {
-        if (this.pendingTransitions.length === 0) {
-            return;
-        }
-        
-        // Sort by timestamp to ensure proper order
-        this.pendingTransitions.sort((a, b) => a.timestamp - b.timestamp);
-        
-        // Take the most recent transition (discard outdated ones)
-        const transition = this.pendingTransitions.pop();
-        const discardedCount = this.pendingTransitions.length;
-        this.pendingTransitions.length = 0; // Clear all other pending transitions
-        
-        if (discardedCount > 0) {
-            Logger.debug(`Discarded ${discardedCount} outdated queued transitions`);
-        }
-        
-        Logger.debug(`Processing queued transition to ${transition.newState}`);
-        
-        // Execute the queued transition asynchronously to prevent stack overflow
-        setTimeout(() => {
-            this.transitionToState(
-                transition.newState, 
-                transition.reason + ' (queued)', 
-                transition.force
-            );
-        }, 0);
-    }
-    
-    /**
-     * Check if a transition is currently in progress
-     * @returns {boolean} True if transitioning
-     */
-    isTransitionInProgress() {
-        return this.isTransitioning;
-    }
-    
-    /**
-     * Get count of pending transitions
-     * @returns {number} Number of pending transitions
-     */
-    getPendingTransitionCount() {
-        return this.pendingTransitions.length;
-    }
-    
-    /**
-     * Handle actions needed when transitioning between states
-     * @param {string} fromState - Previous state
-     * @param {string} toState - New state
-     * @param {string} reason - Reason for transition
-     */
-    onStateTransition(fromState, toState, reason) {
-        // Log transition for debugging
-        Logger.debug(`Handling transition from ${fromState} to ${toState}: ${reason}`);
-        
-        // State-specific transition logic
-        switch (toState) {
-            case MEETING_STATES.JOINING:
-                this.onJoiningMeeting();
-                break;
-            case MEETING_STATES.PRE_MEETING:
-                this.onPreMeeting();
-                break;
-            case MEETING_STATES.MEETING_ACTIVE:
-                this.onMeetingActive();
-                break;
-            case MEETING_STATES.CAPTIONS_READY:
-                this.onCaptionsReady();
-                break;
-            case MEETING_STATES.CHAT:
-                this.onReturnToChat();
-                break;
-        }
-    }
-    
-    /**
-     * Check if we're currently in a transition grace period
-     * @returns {boolean} True if in grace period
-     */
-    isInTransitionGracePeriod() {
-        const timeSinceTransition = Date.now() - this.stateTransitionTime;
-        return timeSinceTransition < this.transitionGracePeriod;
-    }
-    
-    /**
-     * Get time since last state transition
-     * @returns {number} Milliseconds since last transition
-     */
-    getTimeSinceTransition() {
-        return Date.now() - this.stateTransitionTime;
-    }
-    
-    /**
-     * Check if state transition has timed out
-     * @returns {boolean} True if transition has taken too long
-     */
-    isTransitionTimedOut() {
-        const timeSinceTransition = this.getTimeSinceTransition();
-        
-        switch (this.meetingState) {
-            case MEETING_STATES.JOINING:
-                return timeSinceTransition > TRANSITION_TIMEOUTS.CHAT_TO_JOINING;
-            case MEETING_STATES.PRE_MEETING:
-                return timeSinceTransition > TRANSITION_TIMEOUTS.JOINING_TO_PRE_MEETING;
-            case MEETING_STATES.MEETING_ACTIVE:
-                return timeSinceTransition > TRANSITION_TIMEOUTS.PRE_MEETING_TO_ACTIVE;
-            case MEETING_STATES.CAPTIONS_READY:
-                return timeSinceTransition > TRANSITION_TIMEOUTS.ACTIVE_TO_CAPTIONS_READY;
-            default:
-                return false;
-        }
-    }
-    
-    /**
-     * Handle joining meeting state
-     */
-    onJoiningMeeting() {
-        Logger.info('Joining meeting - preparing caption capture system');
-        // Prepare for meeting without starting capture yet
-    }
-    
-    /**
-     * Handle pre-meeting state (lobby/waiting)
-     */
-    onPreMeeting() {
-        Logger.info('In pre-meeting state - monitoring for meeting start');
-        // Monitor for meeting to become active
-    }
-    
-    /**
-     * Handle meeting active state
-     */
-    onMeetingActive() {
-        Logger.info('Meeting is now active - looking for caption containers');
-        // Start looking for caption containers with progressive detection
-        this.startCaptionContainerSearch();
-    }
-    
-    /**
-     * Start searching for caption containers with progressive detection
-     */
-    async startCaptionContainerSearch() {
-        try {
-            Logger.info('Starting caption container search...');
-            
-            // Use progressive container detection
-            const container = await this.findCaptionContainerProgressive();
-            
-            if (container) {
-                Logger.info('Caption container detected - transitioning to captions ready');
-                this.transitionToState(MEETING_STATES.CAPTIONS_READY, 'Caption container found');
-            } else {
-                Logger.warn('No caption container found - captions may not be enabled');
-                // Stay in meeting active state and continue monitoring
-                
-                // Schedule another search in case captions get enabled later
-                setTimeout(() => {
-                    if (this.meetingState === MEETING_STATES.MEETING_ACTIVE) {
-                        Logger.info('Retrying caption container search...');
-                        this.startCaptionContainerSearch();
-                    }
-                }, 15000); // Retry every 15 seconds
-            }
-            
-        } catch (error) {
-            Logger.error('Error in caption container search:', error);
-        }
-    }
-    
-    /**
-     * Handle captions ready state
-     */
-    onCaptionsReady() {
-        Logger.info('Captions are ready - starting caption capture');
-        // Begin actual caption capture
-    }
-    
-    /**
-     * Handle return to chat state
-     */
-    onReturnToChat() {
-        Logger.info('Returned to chat - stopping caption capture');
-        // Clean up capture resources
-        this.cleanupCaptureResources();
-    }
-    
-    /**
-     * Check if observer is healthy and functioning
-     * @returns {boolean} True if observer is healthy
-     */
-    checkObserverHealth() {
-        if (!this.observer) {
-            Logger.debug('Observer health check: No observer exists');
-            return false;
-        }
-        
-        try {
-            // Check if observer is still connected and functional
-            if (!this.observer.takeRecords) {
-                Logger.debug('Observer health check: Observer missing takeRecords method');
-                return false;
-            }
-            
-            // Check if observer target still exists in DOM
-            const currentContainer = safeDOMQuery(document, [
-                "[data-tid='closed-caption-renderer-wrapper']",
-                "[data-tid='closed-captions-renderer']"
-            ]);
-            
-            if (!currentContainer) {
-                Logger.debug('Observer health check: Caption container no longer exists');
-                return false;
-            }
-            
-            // Check if observer is still observing the correct target
-            // Note: We can't directly check observer.target, so we assume it's correct if container exists
-            Logger.debug('Observer health check: Observer appears healthy');
-            return true;
-            
-        } catch (error) {
-            Logger.warn('Observer health check failed:', error);
-            return false;
-        }
-    }
-    
-    /**
-     * Smart observer re-targeting instead of full recreation
-     * @returns {boolean} True if re-targeting succeeded
-     */
-    retargetObserver() {
-        if (!this.observer) {
-            Logger.debug('Cannot retarget observer - no observer exists');
-            return false;
-        }
-        
-        try {
-            // Find new caption container
-            const newContainer = safeDOMQuery(document, [
-                "[data-tid='closed-caption-renderer-wrapper']",
-                "[data-tid='closed-captions-renderer']"
-            ]);
-            
-            if (!newContainer) {
-                Logger.debug('Cannot retarget observer - no caption container found');
-                return false;
-            }
-            
-            // Disconnect from old target and reconnect to new target
-            this.observer.disconnect();
-            this.observer.observe(newContainer, {
-                childList: true,
-                subtree: true,
-                characterData: true
-            });
-            
-            Logger.info('Observer successfully retargeted to new container');
-            return true;
-            
-        } catch (error) {
-            Logger.error('Observer retargeting failed:', error);
-            return false;
-        }
-    }
-    
-    /**
-     * Ensure observer is running and healthy
-     * @returns {boolean} True if observer is ready
-     */
-    ensureObserverHealth() {
-        // Check if observer exists and is healthy
-        if (this.checkObserverHealth()) {
-            Logger.debug('Observer is healthy - no action needed');
-            return true;
-        }
-        
-        // Try to retarget observer if it exists but is unhealthy
-        if (this.observer && this.retargetObserver()) {
-            Logger.info('Observer retargeted successfully');
-            return true;
-        }
-        
-        // Observer needs to be recreated
-        Logger.info('Observer needs recreation');
-        return this.recreateObserver();
-    }
-    
-    /**
-     * Recreate observer as last resort
-     * @returns {boolean} True if recreation succeeded
-     */
-    recreateObserver() {
-        try {
-            // Clean up existing observer
-            if (this.observer) {
-                this.observer.disconnect();
-                this.observer = null;
-            }
-            
-            // Find caption container
-            const container = safeDOMQuery(document, [
-                "[data-tid='closed-caption-renderer-wrapper']",
-                "[data-tid='closed-captions-renderer']"
-            ]);
-            
-            if (!container) {
-                Logger.debug('Cannot recreate observer - no caption container found');
-                return false;
-            }
-            
-            // Create new observer
-            this.observer = new MutationObserver(debouncedCheckCaptions);
-            this.observer.observe(container, {
-                childList: true,
-                subtree: true,
-                characterData: true
-            });
-            
-            Logger.info('Observer recreated successfully');
-            return true;
-            
-        } catch (error) {
-            Logger.error('Observer recreation failed:', error);
-            return false;
-        }
-    }
-    
-    /**
-     * Clean up capture resources
-     */
-    cleanupCaptureResources() {
-        // Stop snapshot monitoring
-        this.stopSnapshotMonitoring();
-        
-        // Clean up observer
-        if (this.observer) {
-            this.observer.disconnect();
-            this.observer = null;
-        }
-        
-        // Clean up timers
-        if (this.debounceTimer) {
-            clearTimeout(this.debounceTimer);
-            this.debounceTimer = null;
-        }
-        
-        // Reset capture state
-        this.capturing = false;
-        this.isProcessing = false;
-        
-        Logger.info('Capture resources cleaned up');
-    }
-    
-    /**
-     * Wait for caption container to appear and become ready
-     * @param {number} maxWaitTime - Maximum wait time in milliseconds
-     * @returns {Promise<Element|null>} Caption container element or null if timeout
-     */
-    async waitForCaptionContainer(maxWaitTime = 60000) {
-        const startTime = Date.now();
-        const checkInterval = 2000; // Check every 2 seconds
-        
-        return new Promise((resolve) => {
-            const checkForContainer = () => {
-                try {
-                    const container = safeDOMQuery(document, [
-                        "[data-tid='closed-caption-renderer-wrapper']",
-                        "[data-tid='closed-captions-renderer']",
-                        ".closed-captions-container",
-                        "[data-testid='caption-container']",
-                        ".live-captions-container"
-                    ]);
-                    
-                    if (container && this.isCaptionContainerReady(container)) {
-                        Logger.info('Caption container found and ready');
-                        resolve(container);
-                        return;
-                    }
-                    
-                    if (Date.now() - startTime > maxWaitTime) {
-                        Logger.warn(`Caption container wait timeout after ${maxWaitTime}ms`);
-                        resolve(null);
-                        return;
-                    }
-                    
-                    // Schedule next check
-                    setTimeout(checkForContainer, checkInterval);
-                    
-                } catch (error) {
-                    Logger.error('Error checking for caption container:', error);
-                    resolve(null);
-                }
-            };
-            
-            // Start checking
-            checkForContainer();
-        });
-    }
-    
-    /**
-     * Check if caption container is ready for observation
-     * @param {Element} container - Caption container element
-     * @returns {boolean} True if container is ready
-     */
-    isCaptionContainerReady(container) {
-        if (!container) return false;
-        
-        try {
-            // Check if container is visible
-            if (!container.offsetParent) {
-                Logger.debug('Caption container not visible');
-                return false;
-            }
-            
-            // Check if container has expected structure
-            const hasExpectedAttributes = container.hasAttribute('data-tid') || 
-                                        container.classList.length > 0;
-            
-            if (!hasExpectedAttributes) {
-                Logger.debug('Caption container missing expected attributes');
-                return false;
-            }
-            
-            // Check if container is not empty (indicates Teams has initialized it)
-            const hasContent = container.children.length > 0 || 
-                             container.textContent.trim().length > 0;
-            
-            // For caption containers, it's OK if they're empty initially
-            // but they should at least have the right structure
-            Logger.debug(`Caption container readiness check: visible=${!!container.offsetParent}, hasAttributes=${hasExpectedAttributes}, hasContent=${hasContent}`);
-            
-            return hasExpectedAttributes; // Don't require content for caption containers
-            
-        } catch (error) {
-            Logger.error('Error checking caption container readiness:', error);
-            return false;
-        }
-    }
-    
-    /**
-     * Progressive container detection with validation
-     * @returns {Promise<Element|null>} Found container or null
-     */
-    async findCaptionContainerProgressive() {
-        const containerSelectors = [
-            "[data-tid='closed-caption-renderer-wrapper']", // Primary Teams v2
-            "[data-tid='closed-captions-renderer']",         // Legacy Teams
-            ".closed-captions-container",                    // Generic selector
-            "[data-testid='caption-container']",             // Test environments
-            ".live-captions-container"                       // Alternative naming
-        ];
-        
-        Logger.debug('Starting progressive caption container detection');
-        
-        // Try each selector with increasing wait times
-        for (let i = 0; i < containerSelectors.length; i++) {
-            const selector = containerSelectors[i];
-            const waitTime = (i + 1) * 5000; // 5s, 10s, 15s, 20s, 25s
-            
-            try {
-                const container = await this.waitForSpecificContainer(selector, waitTime);
-                if (container) {
-                    Logger.info(`Caption container found using selector: ${selector}`);
-                    return container;
-                }
-            } catch (error) {
-                Logger.debug(`Container search failed for selector ${selector}:`, error);
-            }
-        }
-        
-        Logger.warn('Progressive container detection failed - no containers found');
-        return null;
-    }
-    
-    /**
-     * Wait for specific container selector
-     * @param {string} selector - CSS selector to wait for
-     * @param {number} maxWaitTime - Maximum wait time
-     * @returns {Promise<Element|null>} Found element or null
-     */
-    async waitForSpecificContainer(selector, maxWaitTime = 10000) {
-        const startTime = Date.now();
-        const checkInterval = 1000; // Check every second
-        
-        return new Promise((resolve) => {
-            const checkForElement = () => {
-                try {
-                    const element = document.querySelector(selector);
-                    
-                    if (element && this.isCaptionContainerReady(element)) {
-                        resolve(element);
-                        return;
-                    }
-                    
-                    if (Date.now() - startTime > maxWaitTime) {
-                        resolve(null);
-                        return;
-                    }
-                    
-                    setTimeout(checkForElement, checkInterval);
-                    
-                } catch (error) {
-                    Logger.debug(`Error checking for selector ${selector}:`, error);
-                    resolve(null);
-                }
-            };
-            
-            checkForElement();
-        });
-    }
-    
-    /**
-     * Generate a hash for caption content for efficient deduplication
-     */
-    generateCaptionHash(name, text) {
-        return `${name}:${text}`;
-    }
-    
-    /**
-     * Check if caption already exists using hash lookup
-     */
-    isDuplicateCaption(name, text) {
-        const hash = this.generateCaptionHash(name, text);
-        return this.captionHashSet.has(hash);
-    }
-    
-    /**
-     * Add caption hash to tracking set
-     */
-    addCaptionHash(name, text) {
-        const hash = this.generateCaptionHash(name, text);
-        this.captionHashSet.add(hash);
-    }
-    
-    /**
-     * Generate snapshot of current caption state from DOM
-     * @returns {string} Serialized snapshot of current captions
-     */
-    generateCaptionSnapshot() {
-        try {
-            const captionContainerSelectors = [
-                "[data-tid='closed-caption-renderer-wrapper']", // Teams v2 structure
-                "[data-tid='closed-captions-renderer']"         // Legacy structure
-            ];
-            
-            const closedCaptionsContainer = safeDOMQuery(document, captionContainerSelectors);
-            if (!closedCaptionsContainer) {
-                return '';
-            }
-            
-            const captionSelectors = [
-                '.fui-ChatMessageCompact',
-                '.caption-item',
-                '[data-tid="caption-text"]'
-            ];
-            
-            let transcripts = [];
-            for (const selector of captionSelectors) {
-                transcripts = closedCaptionsContainer.querySelectorAll(selector);
-                if (transcripts.length > 0) break;
-            }
-            
-            const captionData = [];
-            transcripts.forEach((transcript) => {
-                try {
-                    const authorElement = safeDOMQuery(transcript, ['[data-tid="author"]', '.author', '.speaker']);
-                    const textElement = safeDOMQuery(transcript, ['[data-tid="closed-caption-text"]', '.caption-text', '.text']);
-                    
-                    if (authorElement && textElement) {
-                        const name = authorElement.innerText?.trim();
-                        const text = textElement.innerText?.trim();
-                        if (name && text && text.length > 0) {
-                            captionData.push(`${name}:${text}`);
-                        }
-                    }
-                } catch (error) {
-                    Logger.warn('Error processing transcript element:', error);
-                }
-            });
-            
-            return captionData.join('|');
-        } catch (error) {
-            Logger.error('Error generating caption snapshot:', error);
+            console.warn('Safe text extraction failed:', error);
             return '';
         }
-    }
-    
-    /**
-     * Start snapshot-based capture monitoring
-     */
-    startSnapshotMonitoring() {
-        this.stopSnapshotMonitoring(); // Clean up any existing timers
-        
-        this.snapshotCheckTimer = setInterval(() => {
-            this.checkCaptionSnapshot();
-        }, SNAPSHOT_CHECK_INTERVAL());
-        
-        Logger.info('Snapshot monitoring started');
-    }
-    
-    /**
-     * Stop snapshot-based capture monitoring
-     */
-    stopSnapshotMonitoring() {
-        if (this.snapshotCheckTimer) {
-            clearInterval(this.snapshotCheckTimer);
-            this.snapshotCheckTimer = null;
-        }
-        
-        if (this.silenceTimer) {
-            clearTimeout(this.silenceTimer);
-            this.silenceTimer = null;
-        }
-        
-        Logger.debug('Snapshot monitoring stopped');
-    }
-    
-    /**
-     * Check for caption changes and manage silence detection
-     */
-    checkCaptionSnapshot() {
+    },
+
+    safeClosest(element, selector) {
         try {
-            const currentSnapshot = this.generateCaptionSnapshot();
+            return element ? element.closest(selector) : null;
+        } catch (error) {
+            console.warn(`Safe closest failed for "${selector}":`, error);
+            return null;
+        }
+    },
+
+    // Get caption elements with fallback selectors
+    getCaptionElements() {
+        try {
+            const config = window.CaptionSaver.Config;
             
-            if (currentSnapshot !== this.lastCaptionSnapshot) {
-                Logger.debug('Caption changes detected, resetting silence timer');
-                
-                // Changes detected - reset silence timer
-                this.resetSilenceTimer();
-                this.lastCaptionSnapshot = currentSnapshot;
-                this.lastSnapshotTime = Date.now();
-                this.snapshotFailureCount = 0; // Reset failure count on success
-                
-                // Store current snapshot data for potential processing
-                this.pendingCaptionData = this.parseCaptionSnapshot(currentSnapshot);
-                
-            } else if (this.pendingCaptionData.length >= MIN_CAPTIONS_FOR_STABILITY()) {
-                // No changes and we have sufficient captions - check if silence period has elapsed
-                const timeSinceLastChange = Date.now() - this.lastSnapshotTime;
-                if (timeSinceLastChange >= CAPTION_STABILITY_DELAY()) {
-                    Logger.info(`Silence detected (${timeSinceLastChange}ms), processing stable caption batch`);
-                    this.processStableCaptionBatch();
+            // Primary selector
+            let captionTextElements = this.safeQuerySelectorAll(config.SELECTORS.PRIMARY_CAPTION);
+            
+            // Fallback selectors if primary doesn't work
+            if (captionTextElements.length === 0) {
+                for (const selector of config.SELECTORS.FALLBACK_CAPTIONS) {
+                    captionTextElements = this.safeQuerySelectorAll(selector);
+                    if (captionTextElements.length > 0) {
+                        console.log(`Using fallback caption selector: ${selector}`);
+                        break;
+                    }
                 }
             }
             
-            // Check for snapshot mode failure
-            this.checkSnapshotModeHealth();
-            
+            return captionTextElements;
         } catch (error) {
-            Logger.error('Error in checkCaptionSnapshot:', error);
-            this.snapshotFailureCount++;
+            console.error('Error in getCaptionElements:', error);
+            return [];
         }
-    }
-    
-    /**
-     * Reset the silence detection timer
-     */
-    resetSilenceTimer() {
-        if (this.silenceTimer) {
-            clearTimeout(this.silenceTimer);
-        }
-        
-        this.silenceTimer = setTimeout(() => {
-            Logger.debug('Silence timer expired, processing captions');
-            this.processStableCaptionBatch();
-        }, CAPTION_STABILITY_DELAY());
-    }
-    
-    /**
-     * Parse caption snapshot into structured data
-     * @param {string} snapshot - Snapshot string to parse
-     * @returns {Array} Array of caption objects
-     */
-    parseCaptionSnapshot(snapshot) {
-        if (!snapshot) return [];
-        
-        return snapshot.split('|').map(entry => {
-            const [name, ...textParts] = entry.split(':');
-            return {
-                name: name?.trim(),
-                text: textParts.join(':')?.trim(),
-                timestamp: new Date().toLocaleTimeString()
-            };
-        }).filter(entry => entry.name && entry.text);
-    }
-    
-    /**
-     * Process stable caption batch with smart deduplication (core of snapshot approach)
-     */
-    processStableCaptionBatch() {
+    },
+
+    // Extract caption data with fallback strategies
+    extractCaptionData(textElement) {
         try {
-            if (this.pendingCaptionData.length === 0) {
-                Logger.debug('No pending captions to process');
+            const result = {
+                text: '',
+                name: 'Unknown Speaker',
+                element: textElement
+            };
+            
+            // Primary text extraction with normalization
+            const rawText = this.safeExtractText(textElement);
+            result.text = window.CaptionSaver.TextProcessor.normalizeText(rawText);
+            if (!result.text) return null;
+            
+            // Primary author extraction strategy
+            const config = window.CaptionSaver.Config;
+            const transcript = this.safeClosest(textElement, config.SELECTORS.CHAT_MESSAGE);
+            if (transcript) {
+                const authorElement = this.safeQuerySelector(transcript, config.SELECTORS.AUTHOR);
+                if (authorElement) {
+                    result.name = this.safeExtractText(authorElement);
+                }
+            }
+            
+            // Fallback author extraction strategies
+            if (result.name === 'Unknown Speaker') {
+                const fallbackSelectors = [
+                    '[data-tid="author"]',
+                    '.fui-ChatMessageAuthor',
+                    '[class*="author"]',
+                    '[class*="Author"]',
+                    '[class*="name"]',
+                    '[class*="Name"]'
+                ];
+                
+                for (const selector of fallbackSelectors) {
+                    const chatMessage = this.safeClosest(textElement, '[class*="ChatMessage"]');
+                    const authorEl = this.safeQuerySelector(chatMessage, selector) ||
+                                   this.safeQuerySelector(textElement.parentElement, selector) ||
+                                   this.safeQuerySelector(textElement.parentElement?.parentElement, selector);
+                    
+                    if (authorEl) {
+                        const authorText = this.safeExtractText(authorEl);
+                        if (authorText && authorText !== result.text) {
+                            result.name = authorText;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            return result;
+        } catch (error) {
+            console.error('Error in extractCaptionData:', error);
+            return null;
+        }
+    }
+};
+
+// ========================================================================
+// TEXT PROCESSOR MODULE - Text normalization and similarity
+// ========================================================================
+window.CaptionSaver.TextProcessor = {
+    // Comprehensive text cleaning and normalization
+    normalizeText(text) {
+        if (!text) return '';
+        
+        let cleaned = text;
+        
+        // Remove HTML entities
+        cleaned = cleaned.replace(/&[a-zA-Z0-9#]+;/g, ' ');
+        
+        // Remove extra whitespace (multiple spaces, tabs, newlines)
+        cleaned = cleaned.replace(/\s+/g, ' ');
+        
+        // Remove common Teams UI artifacts and typing indicators
+        cleaned = cleaned.replace(/\.\.\./g, ''); // Remove ellipsis/typing indicators
+        cleaned = cleaned.replace(/^\s*[\.\-\*\>\<\|\~\+\=]+\s*/g, ''); // Remove leading symbols
+        cleaned = cleaned.replace(/\s*[\.\-\*\>\<\|\~\+\=]+\s*$/g, ''); // Remove trailing symbols
+        
+        // Remove common UI noise
+        cleaned = cleaned.replace(/\[.*?\]/g, ''); // Remove bracketed content
+        cleaned = cleaned.replace(/\(typing\)/gi, ''); // Remove typing indicators
+        cleaned = cleaned.replace(/\(speaking\)/gi, ''); // Remove speaking indicators
+        
+        // Normalize punctuation spacing
+        cleaned = cleaned.replace(/\s*([,.!?;:])\s*/g, '$1 ');
+        
+        // Final cleanup
+        cleaned = cleaned.trim();
+        
+        return cleaned;
+    },
+
+    // Calculate text similarity for fuzzy duplicate detection
+    calculateTextSimilarity(text1, text2) {
+        try {
+            if (!text1 || !text2) return 0;
+            
+            const norm1 = this.normalizeText(text1).toLowerCase();
+            const norm2 = this.normalizeText(text2).toLowerCase();
+            
+            if (norm1 === norm2) return 1;
+            
+            // Check if one text contains the other (for progressive updates)
+            if (norm1.includes(norm2) || norm2.includes(norm1)) {
+                const shorter = norm1.length < norm2.length ? norm1 : norm2;
+                const longer = norm1.length >= norm2.length ? norm1 : norm2;
+                return shorter.length / longer.length;
+            }
+            
+            // Simple word-based similarity for different approaches to same content
+            const config = window.CaptionSaver.Config;
+            const words1 = norm1.split(/\s+/).filter(w => w.length > config.PERFORMANCE.MAX_WORD_LENGTH_FILTER);
+            const words2 = norm2.split(/\s+/).filter(w => w.length > config.PERFORMANCE.MAX_WORD_LENGTH_FILTER);
+            
+            if (words1.length === 0 || words2.length === 0) return 0;
+            
+            const commonWords = words1.filter(w => words2.includes(w)).length;
+            const totalWords = Math.max(words1.length, words2.length);
+            
+            return commonWords / totalWords;
+        } catch (error) {
+            console.warn('Error calculating text similarity:', error);
+            return 0;
+        }
+    },
+
+    // Create consistent caption keys
+    createCaptionKey(name, text) {
+        const normalizedName = name ? name.trim() : 'Unknown Speaker';
+        const normalizedText = this.normalizeText(text);
+        return `${normalizedName}:${normalizedText}`;
+    }
+};
+
+// ========================================================================
+// STATE MANAGER MODULE - Processing coordination and state management
+// ========================================================================
+window.CaptionSaver.StateManager = {
+    // Processing state tracking
+    processingState: {
+        isProcessing: false,
+        isSilenceDetection: false,
+        isForceCapture: false,
+        lastSilenceDetectionReason: ''
+    },
+
+    // Performance monitoring
+    processingStats: { 
+        runs: 0, 
+        totalTime: 0, 
+        throttledCalls: 0 
+    },
+
+    // Timing state
+    lastCaptionTime: 0,
+    lastProcessingTime: 0,
+    lastCaptionSnapshot: '',
+
+    // Timer references
+    silenceCheckTimer: null,
+    processingThrottle: null,
+    fallbackTimer: null,
+
+    // Set processing state
+    setProcessingState(isProcessing) {
+        this.processingState.isProcessing = isProcessing;
+        if (isProcessing) {
+            console.log('🔄 Caption processing started');
+        }
+    },
+
+    // Check if processing can start
+    canStartProcessing() {
+        return !this.processingState.isProcessing && !this.processingState.isSilenceDetection;
+    },
+
+    // Centralized silence detection control
+    triggerSilenceDetection(reason = 'unknown') {
+        try {
+            // Prevent overlapping silence detection operations
+            if (this.processingState.isSilenceDetection) {
+                console.log(`Silence detection already in progress, skipping: ${reason}`);
+                return false;
+            }
+
+            // Prevent interference with ongoing processing
+            if (this.processingState.isProcessing) {
+                console.log(`Caption processing active, deferring silence detection: ${reason}`);
+                const config = window.CaptionSaver.Config;
+                setTimeout(() => this.triggerSilenceDetection(reason), config.TIMING.DEFER_RETRY_DELAY);
+                return false;
+            }
+
+            this.processingState.isSilenceDetection = true;
+            this.processingState.lastSilenceDetectionReason = reason;
+            
+            console.log(`🔕 Triggering silence detection: ${reason}`);
+
+            // Set artificial timing state for silence detection
+            const config = window.CaptionSaver.Config;
+            const originalTime = this.lastCaptionTime;
+            this.lastCaptionTime = Date.now() - (config.TIMING.SILENCE_TIMEOUT + 1000);
+
+            // Execute silence detection
+            const result = window.CaptionSaver.CaptionProcessor.checkRecentCaptions();
+
+            // Restore original timing state if not naturally updated
+            if (this.lastCaptionTime === Date.now() - (config.TIMING.SILENCE_TIMEOUT + 1000)) {
+                this.lastCaptionTime = originalTime;
+            }
+
+            this.processingState.isSilenceDetection = false;
+            console.log(`✅ Silence detection completed: ${reason}`);
+            
+            return result;
+        } catch (error) {
+            this.processingState.isSilenceDetection = false;
+            console.error(`Error in silence detection (${reason}):`, error);
+            return false;
+        }
+    }
+};
+
+// ========================================================================
+// MEMORY MANAGER MODULE - Cleanup and optimization
+// ========================================================================
+window.CaptionSaver.MemoryManager = {
+    // Caption tracking data
+    captionElementTracking: new Map(),
+    processedCaptions: new Set(),
+
+    // Cleanup tracking data while preserving full transcript
+    cleanupMemory() {
+        const stateManager = window.CaptionSaver.StateManager;
+        
+        // Don't run cleanup during active processing to avoid interference
+        if (stateManager.processingState.isProcessing || stateManager.processingState.isSilenceDetection) {
+            console.log('Deferring memory cleanup due to active operations');
+            return;
+        }
+
+        const config = window.CaptionSaver.Config;
+        const now = Date.now();
+        
+        // Clean up old caption element tracking data
+        let removedTracking = 0;
+        for (const [key, data] of this.captionElementTracking.entries()) {
+            if (now - data.timestamp > config.MEMORY.TRACKING_DATA_MAX_AGE) {
+                this.captionElementTracking.delete(key);
+                removedTracking++;
+            }
+        }
+        
+        // If still too many entries, remove oldest ones
+        if (this.captionElementTracking.size > config.MEMORY.MAX_TRACKING_ENTRIES) {
+            const entries = Array.from(this.captionElementTracking.entries());
+            entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+            
+            const toRemove = entries.slice(0, this.captionElementTracking.size - config.MEMORY.MAX_TRACKING_ENTRIES);
+            for (const [key] of toRemove) {
+                this.captionElementTracking.delete(key);
+                removedTracking++;
+            }
+        }
+        
+        // Clean up processed captions set (keep only recent ones referenced in transcript)
+        const transcriptKeys = new Set(window.CaptionSaver.Data.transcriptArray.map(item => item.ID));
+        let removedProcessed = 0;
+        for (const key of this.processedCaptions) {
+            if (!transcriptKeys.has(key)) {
+                this.processedCaptions.delete(key);
+                removedProcessed++;
+            }
+        }
+        
+        if (removedTracking > 0 || removedProcessed > 0) {
+            console.log(`Memory cleanup: removed ${removedTracking} tracking entries, ${removedProcessed} processed caption entries`);
+            console.log(`Current memory usage: ${this.captionElementTracking.size} tracking entries, ${this.processedCaptions.size} processed captions, ${window.CaptionSaver.Data.transcriptArray.length} transcript entries`);
+        }
+        
+        // Log performance stats
+        const stats = stateManager.processingStats;
+        if (stats.runs > 0) {
+            const avgProcessingTime = (stats.totalTime / stats.runs).toFixed(2);
+            console.log(`Performance stats: ${stats.runs} processing runs, ${avgProcessingTime}ms avg, ${stats.throttledCalls} throttled calls`);
+        }
+    },
+
+    // Cleanup all timers and observers
+    cleanupAllTimers() {
+        try {
+            const stateManager = window.CaptionSaver.StateManager;
+            
+            if (stateManager.silenceCheckTimer) {
+                clearTimeout(stateManager.silenceCheckTimer);
+                stateManager.silenceCheckTimer = null;
+            }
+            if (stateManager.processingThrottle) {
+                clearTimeout(stateManager.processingThrottle);
+                stateManager.processingThrottle = null;
+            }
+            if (stateManager.fallbackTimer) {
+                clearInterval(stateManager.fallbackTimer);
+                stateManager.fallbackTimer = null;
+            }
+            if (window.CaptionSaver.Data.observer) {
+                window.CaptionSaver.Data.observer.disconnect();
+                window.CaptionSaver.Data.observer = null;
+            }
+            console.log('All timers and observers cleaned up');
+        } catch (error) {
+            console.warn('Error during cleanup:', error);
+        }
+    }
+};
+
+// ========================================================================
+// MEETING DETECTOR MODULE - Meeting state detection with caching
+// ========================================================================
+window.CaptionSaver.MeetingDetector = {
+    // Meeting detection cache
+    meetingDetectionCache: { 
+        result: false, 
+        timestamp: 0 
+    },
+
+    // Optimized meeting detection with caching
+    detectMeetingState() {
+        const config = window.CaptionSaver.Config;
+        const now = Date.now();
+        
+        // Use cached result if still valid
+        if (now - this.meetingDetectionCache.timestamp < config.TIMING.MEETING_CACHE_DURATION) {
+            return this.meetingDetectionCache.result;
+        }
+        
+        try {
+            const domUtils = window.CaptionSaver.DOMUtils;
+            
+            // Check specific, efficient indicators first
+            const quickIndicators = [
+                document.getElementById(config.SELECTORS.MEETING_INDICATORS.CALL_DURATION.slice(1)),
+                domUtils.safeQuerySelector(document, config.SELECTORS.MEETING_INDICATORS.CALL_STATUS_CONTAINER),
+                domUtils.safeQuerySelector(document, config.SELECTORS.MEETING_INDICATORS.CALL_STATUS)
+            ];
+            
+            let inMeeting = quickIndicators.some(indicator => indicator !== null);
+            
+            // Only do expensive span query if quick checks fail
+            if (!inMeeting) {
+                const waitingSpans = domUtils.safeQuerySelectorAll('span[class*="waiting"], span[class*="join"]');
+                inMeeting = Array.from(waitingSpans).some(el => {
+                    const text = domUtils.safeExtractText(el);
+                    return text && text.includes("Waiting for others to join");
+                });
+            }
+            
+            // Cache the result
+            this.meetingDetectionCache.result = inMeeting;
+            this.meetingDetectionCache.timestamp = now;
+            
+            return inMeeting;
+        } catch (error) {
+            console.warn('Error in meeting detection:', error);
+            return this.meetingDetectionCache.result; // Return last known state
+        }
+    }
+};
+
+// ========================================================================
+// ERROR HANDLER MODULE - Centralized error handling
+// ========================================================================
+window.CaptionSaver.ErrorHandler = {
+    // Centralized error logging and handling
+    handleError(error, context = 'unknown') {
+        const errorInfo = {
+            message: error.message || 'Unknown error',
+            stack: error.stack || 'No stack trace',
+            context: context,
+            timestamp: new Date().toISOString(),
+            isOperational: error.isOperational || false
+        };
+        
+        console.error(`[CaptionSaver Error - ${context}]:`, errorInfo);
+        
+        // Could be extended to send to monitoring service
+        return errorInfo;
+    },
+    
+    // Create operational errors
+    createOperationalError(message, context) {
+        const error = new Error(message);
+        error.isOperational = true;
+        error.context = context;
+        return error;
+    },
+    
+    // Wrap async operations with error handling
+    async safeAsync(asyncFn, context = 'async-operation') {
+        try {
+            return await asyncFn();
+        } catch (error) {
+            this.handleError(error, context);
+            throw error;
+        }
+    }
+};
+
+// ========================================================================
+// DATA MODULE - Global data storage
+// ========================================================================
+window.CaptionSaver.Data = {
+    transcriptArray: [],
+    capturing: false,
+    observer: null,
+    transcriptIdCounter: 0,
+    periodicCheckCounter: 0
+};
+
+// ========================================================================
+// CAPTION PROCESSOR MODULE - Core caption processing logic
+// ========================================================================
+window.CaptionSaver.CaptionProcessor = {
+    // Process caption updates and handle live caption changes
+    processCaptionUpdate(captionData, elementIndex) {
+        try {
+            const { text, name, element } = captionData;
+            const memoryManager = window.CaptionSaver.MemoryManager;
+            const textProcessor = window.CaptionSaver.TextProcessor;
+            const config = window.CaptionSaver.Config;
+            
+            // Create tracking key based on element position and speaker
+            const trackingKey = `${elementIndex}:${name}`;
+            
+            // Check if we've seen this element position before
+            const previousData = memoryManager.captionElementTracking.get(trackingKey);
+            
+            if (previousData) {
+                // This is potentially an update to an existing caption
+                const previousText = previousData.text;
+                
+                // Check if current text is an extension/correction of previous text using similarity
+                const similarity = textProcessor.calculateTextSimilarity(text, previousText);
+                const isUpdate = (text.length > previousText.length && similarity > config.SIMILARITY_THRESHOLDS.UPDATE_DETECTION) || 
+                                (similarity > config.SIMILARITY_THRESHOLDS.HIGH_SIMILARITY);
+                
+                if (isUpdate) {
+                    console.log(`Caption update detected (similarity: ${similarity.toFixed(2)}): "${previousText}" -> "${text}"`);
+                    
+                    // Remove the previous version from processed set and transcript array
+                    const oldCaptionKey = textProcessor.createCaptionKey(name, previousText);
+                    memoryManager.processedCaptions.delete(oldCaptionKey);
+                    
+                    // Remove old version from transcript array
+                    const data = window.CaptionSaver.Data;
+                    const oldIndex = data.transcriptArray.findIndex(item => 
+                        item.Name === name && item.Text === previousText && item.ID === oldCaptionKey
+                    );
+                    if (oldIndex !== -1) {
+                        data.transcriptArray.splice(oldIndex, 1);
+                        console.log(`Removed old version from transcript: "${previousText}"`);
+                    }
+                }
+            }
+            
+            // Update tracking data with current caption
+            memoryManager.captionElementTracking.set(trackingKey, {
+                text: text,
+                timestamp: Date.now(),
+                processed: false
+            });
+            
+            return true;
+        } catch (error) {
+            console.error('Error in processCaptionUpdate:', error);
+            return false;
+        }
+    },
+
+    // Enhanced duplicate detection with fuzzy matching
+    isDuplicateCaption(name, text) {
+        try {
+            const textProcessor = window.CaptionSaver.TextProcessor;
+            const memoryManager = window.CaptionSaver.MemoryManager;
+            const config = window.CaptionSaver.Config;
+            
+            const captionKey = textProcessor.createCaptionKey(name, text);
+            
+            // First check exact match
+            if (memoryManager.processedCaptions.has(captionKey)) {
+                return true;
+            }
+            
+            // Check for similar captions in recent transcript
+            const data = window.CaptionSaver.Data;
+            const recentTranscripts = data.transcriptArray.slice(-config.MEMORY.RECENT_TRANSCRIPTS_LIMIT);
+            
+            for (const transcript of recentTranscripts) {
+                if (transcript.Name === name) {
+                    const similarity = textProcessor.calculateTextSimilarity(text, transcript.Text);
+                    if (similarity > config.SIMILARITY_THRESHOLDS.DUPLICATE_DETECTION) {
+                        console.log(`Fuzzy duplicate detected (similarity: ${similarity.toFixed(2)}): "${transcript.Text}" ≈ "${text}"`);
+                        return true;
+                    }
+                }
+            }
+            
+            return false;
+        } catch (error) {
+            console.error('Error in isDuplicateCaption:', error);
+            return false;
+        }
+    },
+
+    // Main caption processing function
+    checkCaptions() {
+        try {
+            const domUtils = window.CaptionSaver.DOMUtils;
+            const stateManager = window.CaptionSaver.StateManager;
+            const textProcessor = window.CaptionSaver.TextProcessor;
+            const memoryManager = window.CaptionSaver.MemoryManager;
+            const config = window.CaptionSaver.Config;
+            const data = window.CaptionSaver.Data;
+            
+            // Get all caption text elements using centralized function
+            const captionTextElements = domUtils.getCaptionElements();
+            
+            // Create a snapshot of current caption content to detect real changes
+            if (captionTextElements.length > 0) {
+                const currentSnapshot = Array.from(captionTextElements).map(el => domUtils.safeExtractText(el)).join('|');
+                
+                // Only update timing if the content actually changed
+                if (currentSnapshot !== stateManager.lastCaptionSnapshot) {
+                    stateManager.lastCaptionSnapshot = currentSnapshot;
+                    stateManager.lastCaptionTime = Date.now();
+                    
+                    console.log('Caption content changed, resetting silence timer');
+                    
+                    // Reset the silence check timer
+                    if (stateManager.silenceCheckTimer) {
+                        clearTimeout(stateManager.silenceCheckTimer);
+                    }
+                    
+                    // Set a timer to check for recent captions after configured silence timeout
+                    stateManager.silenceCheckTimer = setTimeout(() => {
+                        this.checkRecentCaptions();
+                    }, config.TIMING.SILENCE_TIMEOUT);
+                }
+            }
+            
+            // Use configurable thresholds for better caption capture
+            if (captionTextElements.length < config.MEMORY.MIN_CAPTIONS_REQUIRED) {
+                console.log(`Only ${captionTextElements.length} captions, need at least ${config.MEMORY.MIN_CAPTIONS_REQUIRED} for stable processing`);
                 return;
             }
             
-            Logger.info(`Processing stable caption batch: ${this.pendingCaptionData.length} captions`);
+            const numStableElements = Math.max(1, captionTextElements.length - config.MEMORY.STABILITY_BUFFER);
             
-            // Step 1: Remove exact duplicates within the batch itself
-            const uniqueBatchCaptions = this.deduplicateWithinBatch(this.pendingCaptionData);
-            Logger.debug(`After internal deduplication: ${uniqueBatchCaptions.length} unique captions`);
-            
-            // Step 2: Process each unique caption
-            let addedCount = 0;
-            uniqueBatchCaptions.forEach(captionData => {
-                const { name, text, timestamp } = captionData;
+            for (let i = 0; i < numStableElements; i++) {
+                const textElement = captionTextElements[i];
                 
-                // Check for exact duplicates against existing transcript
-                if (!this.isDuplicateCaption(name, text)) {
+                // Use helper function with fallback strategies
+                const captionData = domUtils.extractCaptionData(textElement);
+                if (!captionData) continue;
+                
+                const { text: Text, name: Name } = captionData;
+                
+                // Process caption update detection
+                const shouldProcess = this.processCaptionUpdate(captionData, i);
+                if (!shouldProcess) continue;
+                
+                // Enhanced duplicate detection with fuzzy matching
+                if (this.isDuplicateCaption(Name, Text)) {
+                    continue;
+                }
+                
+                // Create a unique key using consistent helper function
+                const captionKey = textProcessor.createCaptionKey(Name, Text);
+                
+                // Mark as processed
+                memoryManager.processedCaptions.add(captionKey);
+                
+                // Add to transcript array
+                const Time = new Date().toLocaleTimeString();
+                const newCaption = {
+                    Name,
+                    Text,
+                    Time,
+                    ID: captionKey
+                };
+                
+                data.transcriptArray.push(newCaption);
+                console.log('FINAL STABLE CAPTION:', newCaption);
+            }
+        } catch (error) {
+            console.error('Error in checkCaptions:', error);
+        }
+    },
+
+    // Check recent captions during silence periods
+    checkRecentCaptions() {
+        try {
+            console.log('checkRecentCaptions called - checking for silence-based captions');
+            
+            const domUtils = window.CaptionSaver.DOMUtils;
+            const stateManager = window.CaptionSaver.StateManager;
+            const config = window.CaptionSaver.Config;
+            
+            const captionTextElements = domUtils.getCaptionElements();
+            
+            if (captionTextElements.length === 0) {
+                console.log('No caption elements found for silence check');
+                return;
+            }
+            
+            console.log(`Found ${captionTextElements.length} caption elements for silence check`);
+            
+            const timeSinceLastCaption = Date.now() - stateManager.lastCaptionTime;
+            console.log(`Time since last caption: ${timeSinceLastCaption}ms`);
+            
+            if (timeSinceLastCaption >= config.TIMING.SILENCE_TIMER_OFFSET) {
+                console.log('Processing recent captions due to silence...');
+                
+                const startIndex = Math.max(0, captionTextElements.length - config.MEMORY.STABILITY_BUFFER); 
+                let endIndex = captionTextElements.length - 1;
+                
+                // Check if the last caption looks complete (ends with punctuation)
+                if (captionTextElements.length > 0) {
+                    const lastElement = captionTextElements[captionTextElements.length - 1];
+                    const lastText = domUtils.safeExtractText(lastElement);
+                    if (lastText.match(/[.!?]$/)) {
+                        console.log('Last caption ends with punctuation, including it:', lastText);
+                        endIndex = captionTextElements.length;
+                    }
+                }
+                
+                console.log(`Processing captions from index ${startIndex} to ${endIndex - 1}`);
+                
+                for (let i = startIndex; i < endIndex; i++) {
+                    const textElement = captionTextElements[i];
+                    
+                    const captionData = domUtils.extractCaptionData(textElement);
+                    if (!captionData) continue;
+                    
+                    const { text: Text, name: Name } = captionData;
+                    
+                    // Process caption update detection for silence-based captions
+                    const shouldProcess = this.processCaptionUpdate(captionData, i);
+                    if (!shouldProcess) continue;
+                    
+                    // Enhanced duplicate detection with fuzzy matching
+                    if (this.isDuplicateCaption(Name, Text)) {
+                        console.log(`Skipping duplicate silence caption: ${Text}`);
+                        continue;
+                    }
+                    
+                    // Create a unique key using consistent helper function
+                    const textProcessor = window.CaptionSaver.TextProcessor;
+                    const memoryManager = window.CaptionSaver.MemoryManager;
+                    const data = window.CaptionSaver.Data;
+                    
+                    const captionKey = textProcessor.createCaptionKey(Name, Text);
+                    
+                    // Mark as processed
+                    memoryManager.processedCaptions.add(captionKey);
+                    
                     // Add to transcript array
-                    this.transcriptArray.push({
-                        Name: name,
-                        Text: text,
-                        Time: timestamp,
-                        ID: `caption_${this.transcriptIdCounter++}`
+                    const Time = new Date().toLocaleTimeString();
+                    const newCaption = {
+                        Name,
+                        Text,
+                        Time,
+                        ID: captionKey
+                    };
+                    
+                    data.transcriptArray.push(newCaption);
+                    console.log('SILENCE-DETECTED STABLE CAPTION:', newCaption);
+                }
+            } else {
+                console.log('Not enough silence time elapsed');
+            }
+        } catch (error) {
+            console.error('Error in checkRecentCaptions:', error);
+        }
+    },
+
+    // Debounced caption processing to prevent excessive processing
+    debouncedCheckCaptions() {
+        const stateManager = window.CaptionSaver.StateManager;
+        const config = window.CaptionSaver.Config;
+        const now = Date.now();
+        
+        // Check if we can start processing
+        if (!stateManager.canStartProcessing()) {
+            console.log('Processing blocked by active operations');
+            return;
+        }
+        
+        // Clear existing throttle timer
+        if (stateManager.processingThrottle) {
+            clearTimeout(stateManager.processingThrottle);
+        }
+        
+        // If we processed recently, delay this run
+        const timeSinceLastProcessing = now - stateManager.lastProcessingTime;
+        if (timeSinceLastProcessing < config.TIMING.DEBOUNCE_INTERVAL) {
+            stateManager.processingStats.throttledCalls++;
+            stateManager.processingThrottle = setTimeout(() => {
+                if (stateManager.canStartProcessing()) {
+                    stateManager.lastProcessingTime = Date.now();
+                    stateManager.setProcessingState(true);
+                    const startTime = performance.now();
+                    this.checkCaptions();
+                    const endTime = performance.now();
+                    stateManager.processingStats.runs++;
+                    stateManager.processingStats.totalTime += (endTime - startTime);
+                    stateManager.setProcessingState(false);
+                }
+            }, config.TIMING.DEBOUNCE_INTERVAL - timeSinceLastProcessing);
+            return;
+        }
+        
+        // Process immediately
+        stateManager.lastProcessingTime = now;
+        stateManager.setProcessingState(true);
+        const startTime = performance.now();
+        this.checkCaptions();
+        const endTime = performance.now();
+        stateManager.processingStats.runs++;
+        stateManager.processingStats.totalTime += (endTime - startTime);
+        stateManager.setProcessingState(false);
+    },
+
+    // Sort transcripts by screen order
+    sortTranscriptsByScreenOrder() {
+        try {
+            const domUtils = window.CaptionSaver.DOMUtils;
+            const textProcessor = window.CaptionSaver.TextProcessor;
+            const data = window.CaptionSaver.Data;
+            
+            // Get the current order of captions as they appear on screen
+            const captionTextElements = domUtils.getCaptionElements();
+            const screenOrder = [];
+            
+            captionTextElements.forEach((element, index) => {
+                const captionData = domUtils.extractCaptionData(element);
+                if (captionData) {
+                    screenOrder.push({
+                        text: captionData.text,
+                        name: captionData.name,
+                        screenPosition: index
                     });
-                    
-                    // Add to hash set for future duplicate detection
-                    this.addCaptionHash(name, text);
-                    addedCount++;
-                    
-                    Logger.debug(`Added stable caption: "${text}" by ${name}`);
-                } else {
-                    Logger.debug(`Skipped existing duplicate: "${text}" by ${name}`);
                 }
             });
             
-            // Update reliability tracking
-            if (addedCount > 0) {
-                this.lastCaptionTime = Date.now();
-                this.captionCount += addedCount;
+            // Create a map for quick lookup of screen positions using consistent keys
+            const positionMap = new Map();
+            screenOrder.forEach(item => {
+                const key = textProcessor.createCaptionKey(item.name, item.text);
+                positionMap.set(key, item.screenPosition);
+            });
+            
+            // Sort transcriptArray based on screen order
+            const orderedTranscripts = [...data.transcriptArray].sort((a, b) => {
+                const keyA = textProcessor.createCaptionKey(a.Name, a.Text);
+                const keyB = textProcessor.createCaptionKey(b.Name, b.Text);
                 
-                // Trigger memory management if needed
-                if (this.transcriptArray.length % MEMORY_CHECK_INTERVAL() === 0) {
-                    enforceMemoryLimits();
+                const posA = positionMap.get(keyA);
+                const posB = positionMap.get(keyB);
+                
+                // If both have screen positions, sort by screen order
+                if (posA !== undefined && posB !== undefined) {
+                    return posA - posB;
                 }
                 
-                // Backup to localStorage periodically
-                if (this.transcriptArray.length % 100 === 0) {
-                    this.backupToLocalStorage();
-                }
-            }
+                // If only one has a screen position, put it first
+                if (posA !== undefined) return -1;
+                if (posB !== undefined) return 1;
+                
+                // If neither has a screen position, maintain original order
+                return 0;
+            });
             
-            // Clear pending data and reset silence timer to prevent immediate reprocessing
-            this.pendingCaptionData = [];
-            this.resetSilenceTimer(); // Reset timer to prevent immediate reprocessing
-            
-            Logger.info(`Batch processing complete: ${addedCount} new captions added`);
-            
+            console.log("Sorted transcripts by screen order:", orderedTranscripts);
+            return orderedTranscripts;
         } catch (error) {
-            Logger.error('Error processing stable caption batch:', error);
-            // In case of error, fall back to progressive mode temporarily
-            this.switchToFallbackMode('Batch processing error');
-        }
-    }
-    
-    /**
-     * Deduplicate captions within a batch using smart progressive detection
-     * @param {Array} captionBatch - Array of caption objects to deduplicate
-     * @returns {Array} Deduplicated array with only the most complete captions
-     */
-    deduplicateWithinBatch(captionBatch) {
-        if (captionBatch.length <= 1) return captionBatch;
-        
-        // Group captions by speaker
-        const speakerGroups = {};
-        captionBatch.forEach((caption, index) => {
-            if (!speakerGroups[caption.name]) {
-                speakerGroups[caption.name] = [];
-            }
-            speakerGroups[caption.name].push({ ...caption, originalIndex: index });
-        });
-        
-        const finalCaptions = [];
-        
-        // Process each speaker's captions
-        Object.keys(speakerGroups).forEach(speakerName => {
-            const captions = speakerGroups[speakerName];
-            
-            if (captions.length === 1) {
-                // Single caption for this speaker - keep it
-                finalCaptions.push(captions[0]);
-            } else {
-                // Multiple captions from same speaker - apply smart deduplication
-                const deduplicatedCaptions = this.smartDeduplicateGroup(captions);
-                finalCaptions.push(...deduplicatedCaptions);
-            }
-        });
-        
-        // Sort by original index to maintain temporal order
-        finalCaptions.sort((a, b) => a.originalIndex - b.originalIndex);
-        
-        // Remove the originalIndex property
-        return finalCaptions.map(caption => {
-            const { originalIndex, ...cleanCaption } = caption;
-            return cleanCaption;
-        });
-    }
-    
-    /**
-     * Smart deduplication for a group of captions from the same speaker
-     * @param {Array} captionGroup - Array of captions from same speaker
-     * @returns {Array} Deduplicated captions
-     */
-    smartDeduplicateGroup(captionGroup) {
-        if (captionGroup.length <= 1) return captionGroup;
-        
-        const result = [];
-        const processed = new Set();
-        
-        for (let i = 0; i < captionGroup.length; i++) {
-            if (processed.has(i)) continue;
-            
-            const currentCaption = captionGroup[i];
-            let shouldKeep = true;
-            
-            // Check if this caption is a progressive update of a later caption
-            for (let j = i + 1; j < captionGroup.length; j++) {
-                if (processed.has(j)) continue;
-                
-                const laterCaption = captionGroup[j];
-                const progressiveCheck = isWhitelistedProgressive(currentCaption.text, laterCaption.text);
-                
-                if (progressiveCheck.isProgressive && 
-                    (progressiveCheck.confidence === 'HIGH' || progressiveCheck.confidence === 'VERY_HIGH')) {
-                    
-                    Logger.debug(`Within-batch progressive update detected: "${currentCaption.text}" -> "${laterCaption.text}"`);
-                    shouldKeep = false; // Skip this caption, keep the later one
-                    processed.add(i);
-                    break;
-                }
-            }
-            
-            if (shouldKeep) {
-                result.push(currentCaption);
-                processed.add(i);
-            }
-        }
-        
-        return result;
-    }
-    
-    /**
-     * Check snapshot mode health and switch to fallback if needed
-     */
-    checkSnapshotModeHealth() {
-        // Check for excessive failures
-        if (this.snapshotFailureCount > 5) {
-            this.switchToFallbackMode('Excessive snapshot failures');
-            return;
-        }
-        
-        // Check for emergency capture threshold
-        if (this.pendingCaptionData.length > EMERGENCY_CAPTURE_THRESHOLD()) {
-            Logger.warn(`Emergency capture triggered: ${this.pendingCaptionData.length} pending captions`);
-            this.processStableCaptionBatch(); // Force process large queue
-        }
-        
-        // Check for fallback timeout
-        if (this.fallbackModeStartTime && 
-            Date.now() - this.fallbackModeStartTime > FALLBACK_TIMEOUT()) {
-            Logger.info('Attempting to return to snapshot mode from fallback');
-            this.switchToSnapshotMode();
-        }
-    }
-    
-    /**
-     * Switch to fallback (progressive) mode
-     */
-    switchToFallbackMode(reason = 'Unknown') {
-        if (this.captureMode === 'progressive') return; // Already in fallback mode
-        
-        Logger.warn(`Switching to fallback mode: ${reason}`);
-        this.captureMode = 'progressive';
-        this.fallbackModeStartTime = Date.now();
-        this.stopSnapshotMonitoring();
-        
-        // Process any pending captions before switching
-        if (this.pendingCaptionData.length > 0) {
-            this.processStableCaptionBatch();
-        }
-    }
-    
-    /**
-     * Switch back to snapshot mode
-     */
-    switchToSnapshotMode() {
-        Logger.info('Switching to snapshot mode');
-        this.captureMode = 'snapshot';
-        this.fallbackModeStartTime = null;
-        this.snapshotFailureCount = 0;
-        this.lastCaptionSnapshot = '';
-        this.pendingCaptionData = [];
-        this.startSnapshotMonitoring();
-    }
-    
-    /**
-     * Backup captions to localStorage for crash recovery
-     */
-    backupToLocalStorage() {
-        try {
-            localStorage.setItem('caption_saver_backup', JSON.stringify({
-                data: this.transcriptArray.slice(-500), // Keep last 500 entries as backup
-                timestamp: Date.now(),
-                meetingId: this.currentMeetingId
-            }));
-            Logger.debug(`Backup saved: ${this.transcriptArray.length} total captions`);
-        } catch (error) {
-            Logger.warn('Backup to localStorage failed:', error);
-        }
-    }
-}
-
-// Global instance
-const captionManager = new CaptionManager();
-
-// Legacy variable getters for backward compatibility (maintain references)
-Object.defineProperty(globalThis, 'transcriptArray', {
-    get: () => captionManager.transcriptArray,
-    set: (value) => { captionManager.transcriptArray = value; }
-});
-Object.defineProperty(globalThis, 'capturing', {
-    get: () => captionManager.capturing,
-    set: (value) => { captionManager.capturing = value; }
-});
-Object.defineProperty(globalThis, 'observer', {
-    get: () => captionManager.observer,
-    set: (value) => { captionManager.observer = value; }
-});
-Object.defineProperty(globalThis, 'transcriptIdCounter', {
-    get: () => captionManager.transcriptIdCounter,
-    set: (value) => { captionManager.transcriptIdCounter = value; }
-});
-Object.defineProperty(globalThis, 'currentMeetingId', {
-    get: () => captionManager.currentMeetingId,
-    set: (value) => { captionManager.currentMeetingId = value; }
-});
-Object.defineProperty(globalThis, 'lastMeetingCheck', {
-    get: () => captionManager.lastMeetingCheck,
-    set: (value) => { captionManager.lastMeetingCheck = value; }
-});
-Object.defineProperty(globalThis, 'debounceTimer', {
-    get: () => captionManager.debounceTimer,
-    set: (value) => { captionManager.debounceTimer = value; }
-});
-Object.defineProperty(globalThis, 'isProcessing', {
-    get: () => captionManager.isProcessing,
-    set: (value) => { captionManager.isProcessing = value; }
-});
-Object.defineProperty(globalThis, 'cleanupFunctions', {
-    get: () => captionManager.cleanupFunctions,
-    set: (value) => { captionManager.cleanupFunctions = value; }
-});
-Object.defineProperty(globalThis, 'recentlyRemoved', {
-    get: () => captionManager.recentlyRemoved
-});
-
-// Dynamic constants using configuration system
-const MAX_RECENTLY_REMOVED = () => config.get('MEMORY.MAX_RECENTLY_REMOVED');
-const MAX_TRANSCRIPT_ENTRIES = () => config.get('MEMORY.MAX_TRANSCRIPT_ENTRIES');
-const AUTO_SAVE_THRESHOLD = () => config.get('MEMORY.AUTO_SAVE_THRESHOLD');
-
-// Configuration constants
-const MEETING_CHECK_INTERVAL = 10000; // Check for meeting changes every 10 seconds - keep static for now
-const SAFE_REMOVAL_RECENT_ENTRIES = () => config.get('PROGRESSIVE.SAFE_REMOVAL_RECENT_ENTRIES');
-const PROGRESSIVE_CHECK_LOOKBACK = () => config.get('PROGRESSIVE.CHECK_LOOKBACK');
-const MIN_TEXT_LENGTH_FOR_ANALYSIS = () => config.get('PROGRESSIVE.MIN_TEXT_LENGTH_FOR_ANALYSIS');
-const MIN_PREFIX_EXPANSION_LENGTH = () => config.get('PROGRESSIVE.MIN_PREFIX_EXPANSION_LENGTH');
-const MEMORY_CHECK_INTERVAL = () => config.get('MEMORY.MEMORY_CHECK_INTERVAL');
-const DEBOUNCE_DELAY = () => config.get('CAPTIONS.DEBOUNCE_DELAY');
-const MAX_RETRIES = () => config.get('HEALTH.MAX_RETRIES');
-
-// Hybrid snapshot-based capture constants (inspired by Zerg00s approach)
-const CAPTION_STABILITY_DELAY = () => config.get('CAPTIONS.STABILITY_DELAY');
-const MIN_CAPTIONS_FOR_STABILITY = () => config.get('CAPTIONS.MIN_FOR_STABILITY');
-const SNAPSHOT_CHECK_INTERVAL = () => config.get('CAPTIONS.SNAPSHOT_CHECK_INTERVAL');
-const FALLBACK_TIMEOUT = () => config.get('CAPTIONS.FALLBACK_TIMEOUT');
-const EMERGENCY_CAPTURE_THRESHOLD = () => config.get('CAPTIONS.EMERGENCY_THRESHOLD');
-
-/**
- * Simple logging framework with levels
- */
-const Logger = {
-    get level() { return config.get('DEBUG.LOG_LEVEL'); },
-    set level(value) { config.set('DEBUG.LOG_LEVEL', value); },
-    levels: { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 },
-    
-    shouldLog(level) {
-        return this.levels[level] >= this.levels[this.level];
-    },
-    
-    debug(message, ...args) {
-        if (this.shouldLog('DEBUG')) {
-            console.log(`[DEBUG] 🔍 ${message}`, ...args);
-        }
-    },
-    
-    info(message, ...args) {
-        if (this.shouldLog('INFO')) {
-            console.log(`[INFO] ℹ️ ${message}`, ...args);
-        }
-    },
-    
-    warn(message, ...args) {
-        if (this.shouldLog('WARN')) {
-            console.warn(`[WARN] ⚠️ ${message}`, ...args);
-        }
-    },
-    
-    error(message, ...args) {
-        if (this.shouldLog('ERROR')) {
-            console.error(`[ERROR] ❌ ${message}`, ...args);
+            console.error('Error in sortTranscriptsByScreenOrder:', error);
+            return window.CaptionSaver.Data.transcriptArray;
         }
     }
 };
 
-/**
- * Validate input parameters for safety
- * @param {string} name - Speaker name to validate
- * @param {string} text - Caption text to validate
- * @returns {Object} Validation result with isValid flag and error message
- */
-function validateCaptionInput(name, text) {
-    if (typeof name !== 'string' || typeof text !== 'string') {
-        return { isValid: false, error: 'Name and text must be strings' };
-    }
-    
-    if (name.trim().length === 0) {
-        return { isValid: false, error: 'Speaker name cannot be empty' };
-    }
-    
-    if (text.trim().length === 0) {
-        return { isValid: false, error: 'Caption text cannot be empty' };
-    }
-    
-    if (name.length > 100) {
-        return { isValid: false, error: 'Speaker name too long (max 100 characters)' };
-    }
-    
-    if (text.length > 5000) {
-        return { isValid: false, error: 'Caption text too long (max 5000 characters)' };
-    }
-    
-    return { isValid: true };
-}
-
-/**
- * Enhanced meeting detection with multiple URL patterns
- */
-function extractMeetingId() {
-    try {
-        // Validate window and location exist
-        if (!window || !window.location || !window.location.href) {
-            console.warn('Window location not available for meeting ID extraction');
-            return null;
-        }
+// ========================================================================
+// CONTROLLER MODULE - Main orchestration and public API
+// ========================================================================
+window.CaptionSaver.Controller = {
+    // Initialize periodic checks
+    initializePeriodicChecks() {
+        const config = window.CaptionSaver.Config;
+        const stateManager = window.CaptionSaver.StateManager;
+        const memoryManager = window.CaptionSaver.MemoryManager;
+        const data = window.CaptionSaver.Data;
         
-        const url = window.location.href;
-        
-        // Multiple URL patterns for different Teams meeting formats
-        const urlPatterns = [
-            /meetup-join\/([^\/\?]+)/,           // Standard meetup-join
-            /conversations\/([^\/\?]+)/,         // Conversation-based meetings
-            /calling\/([^\/\?]+)/,               // Direct calling
-            /l\/meetup-join\/([^\/\?]+)/,        // Link-based meetup
-            /meet\/([^\/\?]+)/,                  // Simple meet URLs
-            /m\/([^\/\?]+)/                      // Shortened URLs
-        ];
-        
-        for (const pattern of urlPatterns) {
-            const match = url.match(pattern);
-            if (match && match[1]) {
-                Logger.debug(`Meeting ID extracted using pattern: ${pattern}`);
-                return match[1];
+        setInterval(() => {
+            data.periodicCheckCounter++;
+            
+            if (stateManager.lastCaptionTime === 0) {
+                return; // No captions processed yet
             }
-        }
-        
-        // Fallback to document title if available - normalize title to avoid false positives
-        if (document && document.title) {
-            const title = document.title
-                .replace(/__Microsoft_Teams.*$/, '')  // Remove Teams suffix
-                .replace(/^\(\d+\)\s*/, '')            // Remove notification counts like "(1) "
-                .trim();
-            return title || null;
-        }
-        
-        return null;
-    } catch (error) {
-        console.error('Error extracting meeting ID:', error);
-        return null;
-    }
-}
+            
+            const timeSinceLastCaption = Date.now() - stateManager.lastCaptionTime;
+            if (timeSinceLastCaption >= config.TIMING.SILENCE_TIMEOUT && 
+                timeSinceLastCaption <= (config.TIMING.SILENCE_TIMEOUT + 1000)) {
+                console.log('Periodic silence check triggered');
+                stateManager.triggerSilenceDetection('periodic-check');
+            }
+            
+            // Run memory cleanup every configured interval
+            if (data.periodicCheckCounter % (config.TIMING.MEMORY_CLEANUP_INTERVAL / config.TIMING.PERIODIC_CHECK_INTERVAL) === 0) {
+                memoryManager.cleanupMemory();
+            }
+        }, config.TIMING.PERIODIC_CHECK_INTERVAL);
+    },
 
-/**
- * Detect current meeting state based on DOM indicators
- * @returns {string} Current meeting state
- */
-function detectMeetingState() {
-    try {
-        // Check for meeting join process indicators
-        if (hasJoinIndicators()) {
-            return MEETING_STATES.JOINING;
-        }
+    // Start transcription system
+    startTranscription() {
+        const meetingDetector = window.CaptionSaver.MeetingDetector;
+        const domUtils = window.CaptionSaver.DOMUtils;
+        const captionProcessor = window.CaptionSaver.CaptionProcessor;
+        const memoryManager = window.CaptionSaver.MemoryManager;
+        const stateManager = window.CaptionSaver.StateManager;
+        const config = window.CaptionSaver.Config;
+        const data = window.CaptionSaver.Data;
         
-        // Check for pre-meeting state (lobby/waiting)
-        if (hasPreMeetingIndicators()) {
-            return MEETING_STATES.PRE_MEETING;
-        }
+        const inMeeting = meetingDetector.detectMeetingState();
         
-        // Check for caption containers first (higher priority than general meeting indicators)
-        if (hasCaptionContainers()) {
-            return MEETING_STATES.CAPTIONS_READY;
-        }
-        
-        // Check for active meeting indicators
-        if (hasActiveMeetingIndicators()) {
-            return MEETING_STATES.MEETING_ACTIVE;
-        }
-        
-        // Default to chat state
-        return MEETING_STATES.CHAT;
-        
-    } catch (error) {
-        Logger.error('Error detecting meeting state:', error);
-        return MEETING_STATES.CHAT;
-    }
-}
-
-/**
- * Check for meeting join process indicators
- * @returns {boolean} True if joining meeting
- */
-function hasJoinIndicators() {
-    const joinIndicators = [
-        // Join button or joining process
-        '[data-tid="prejoin-join-button"]',
-        '[data-tid="call-join-button"]',
-        '.join-meeting-button',
-        
-        // Loading states during join
-        '[data-tid="calling-join-sound"]',
-        '[data-tid="calling-connecting-sound"]',
-        '.joining-meeting-indicator',
-        
-        // Join meeting dialog
-        '[data-tid="prejoin-display-name-field"]',
-        '[data-tid="toggle-video"]',
-        '[data-tid="toggle-mute"]'
-    ];
-    
-    return joinIndicators.some(selector => {
-        try {
-            return document.querySelector(selector) !== null;
-        } catch (error) {
+        if (!inMeeting) {
+            setTimeout(() => this.startTranscription(), 5000);
             return false;
         }
-    });
-}
 
-/**
- * Check for pre-meeting state indicators (lobby/waiting)
- * @returns {boolean} True if in pre-meeting state
- */
-function hasPreMeetingIndicators() {
-    const preMeetingIndicators = [
-        // Waiting for host
-        '[data-tid="waiting-for-host"]',
-        '[data-tid="lobby-waiting-screen"]',
-        
-        // Waiting messages
-        'span:contains("Waiting for others to join")',
-        'span:contains("Waiting for the organizer")',
-        'span:contains("Please wait")',
-        
-        // Lobby interface
-        '[data-tid="lobby-screen"]',
-        '[data-tid="prejoin-screen"]',
-        '.lobby-container',
-        
-        // Test audio/video controls in lobby
-        '[data-tid="device-settings-microphone"]',
-        '[data-tid="device-settings-camera"]'
-    ];
-    
-    // Also check for specific text content
-    const waitingTexts = [
-        'Waiting for others to join',
-        'Waiting for the organizer',
-        'Please wait, the meeting will begin soon',
-        'You\'re in the lobby'
-    ];
-    
-    const hasIndicatorElements = preMeetingIndicators.some(selector => {
-        try {
-            return document.querySelector(selector) !== null;
-        } catch (error) {
+        const closedCaptionsContainer = domUtils.safeQuerySelector(document, config.SELECTORS.CAPTIONS_CONTAINER);
+        if (!closedCaptionsContainer) {
+            console.log("Please, click 'More' > 'Language and speech' > 'Turn on live captions'");
+            setTimeout(() => this.startTranscription(), 5000);
             return false;
         }
-    });
-    
-    const hasWaitingText = waitingTexts.some(text => {
-        try {
-            return document.body.textContent.includes(text);
-        } catch (error) {
-            return false;
-        }
-    });
-    
-    return hasIndicatorElements || hasWaitingText;
-}
 
-/**
- * Check for active meeting indicators
- * @returns {boolean} True if meeting is active
- */
-function hasActiveMeetingIndicators() {
-    const activeMeetingIndicators = [
-        // Call duration indicator
-        '[data-tid="call-duration"]',
-        '#call-duration-custom',
-        '.call-duration',
+        console.log("Found captions container, setting up observer...");
         
-        // Call controls
-        '[data-tid="call-controls"]',
-        '[data-tid="call-controls-bar"]',
-        '[data-testid="call-controls"]',
-        '.call-controls',
+        // Clean up any existing timers/observers before setting up new ones
+        memoryManager.cleanupAllTimers();
         
-        // Meeting controls
-        '[data-tid="toggle-mute"]',
-        '[data-tid="toggle-video"]',
-        '[data-tid="call-end-button"]',
-        
-        // Meeting stage
-        '.meeting-stage',
-        '[data-tid="meeting-stage"]',
-        
-        // Participant list
-        '[data-tid="roster-button"]',
-        '[data-tid="participants-button"]',
-        
-        // Screen sharing controls
-        '[data-tid="desktop-share-button"]',
-        '[data-tid="screen-share-button"]'
-    ];
-    
-    return activeMeetingIndicators.some(selector => {
-        try {
-            const element = document.querySelector(selector);
-            return element !== null && element.offsetParent !== null; // Must be visible
-        } catch (error) {
-            return false;
-        }
-    });
-}
-
-/**
- * Check for caption containers (indicates captions are ready)
- * @returns {boolean} True if caption containers are available
- */
-function hasCaptionContainers() {
-    const captionContainerSelectors = [
-        "[data-tid='closed-caption-renderer-wrapper']", // Teams v2 structure
-        "[data-tid='closed-captions-renderer']",         // Legacy structure
-        ".closed-captions-container",
-        "[data-testid='caption-container']",
-        ".live-captions-container"
-    ];
-    
-    return captionContainerSelectors.some(selector => {
-        try {
-            const element = document.querySelector(selector);
-            return element !== null && 
-                   element.offsetParent !== null && // Must be visible
-                   captionManager.isCaptionContainerReady(element); // Must be ready
-        } catch (error) {
-            return false;
-        }
-    });
-}
-
-/**
- * Enhanced meeting state monitoring with transition detection
- */
-function checkForMeetingStateChanges() {
-    try {
-        const now = Date.now();
-        if (now - captionManager.lastMeetingCheck < MEETING_CHECK_INTERVAL) {
-            return;
-        }
-        captionManager.lastMeetingCheck = now;
-        
-        // Detect current meeting state
-        const currentState = detectMeetingState();
-        
-        // Check for new meeting ID
-        const newMeetingId = extractMeetingId();
-        if (newMeetingId && newMeetingId !== captionManager.currentMeetingId) {
-            if (captionManager.currentMeetingId && transcriptArray.length > 0) {
-                Logger.info("New meeting detected, previous transcript data preserved until save/view");
-                Logger.info(`Previous meeting: ${captionManager.currentMeetingId}`);
-                Logger.info(`New meeting: ${newMeetingId}`);
-                
-                // Clear recently removed for new meeting
-                captionManager.recentlyRemoved.length = 0;
-            }
-            captionManager.currentMeetingId = newMeetingId;
-        }
-        
-        // Handle state transitions
-        if (currentState !== captionManager.meetingState) {
-            const reason = `State detection: ${captionManager.meetingState} → ${currentState}`;
-            captionManager.transitionToState(currentState, reason);
-        }
-        
-        // Check for transition timeouts
-        if (captionManager.isTransitionTimedOut()) {
-            const timeoutReason = `Timeout in ${captionManager.meetingState} state (${captionManager.getTimeSinceTransition()}ms)`;
-            Logger.warn(timeoutReason);
-            
-            // Handle timeout based on current state
-            handleStateTimeout(captionManager.meetingState);
-        }
-        
-    } catch (error) {
-        console.error('Error checking for meeting state changes:', error);
-    }
-}
-
-/**
- * Handle state transition timeouts
- * @param {string} timedOutState - The state that timed out
- */
-function handleStateTimeout(timedOutState) {
-    switch (timedOutState) {
-        case MEETING_STATES.JOINING:
-            // If joining takes too long, assume we're still in chat
-            captionManager.transitionToState(MEETING_STATES.CHAT, 'Joining timeout - returning to chat');
-            break;
-            
-        case MEETING_STATES.PRE_MEETING:
-            // If pre-meeting takes too long, check if we're actually in an active meeting
-            if (hasActiveMeetingIndicators()) {
-                captionManager.transitionToState(MEETING_STATES.MEETING_ACTIVE, 'Pre-meeting timeout - detected active meeting');
-            } else {
-                captionManager.transitionToState(MEETING_STATES.CHAT, 'Pre-meeting timeout - returning to chat');
-            }
-            break;
-            
-        case MEETING_STATES.MEETING_ACTIVE:
-            // If meeting is active but captions aren't ready, that's okay - just log it
-            Logger.info('Meeting active timeout - captions may not be enabled');
-            break;
-            
-        case MEETING_STATES.CAPTIONS_READY:
-            // This shouldn't timeout - captions ready is a stable state
-            Logger.debug('Captions ready timeout - this is expected');
-            break;
-            
-        default:
-            Logger.warn(`Unknown state timeout: ${timedOutState}`);
-            break;
-    }
-}
-
-/**
- * Check if we've moved to a new meeting and should reset transcript data
- * @deprecated Use checkForMeetingStateChanges() instead
- */
-function checkForNewMeeting() {
-    // Legacy function - redirect to new state-aware function
-    checkForMeetingStateChanges();
-}
-
-/**
- * Aggressive text normalization for better progressive detection
- * @param {string} text - Text to normalize
- * @returns {string} Normalized text
- */
-function normalizeTextForComparison(text) {
-    if (!text) return '';
-    
-    return text
-        .trim()
-        .replace(/\s+/g, ' ')  // Replace multiple spaces/tabs/newlines with single space
-        .replace(/\s*([.!?;,])\s*/g, '$1')  // Normalize punctuation spacing
-        .replace(/\s*$/, '');  // Remove trailing whitespace
-}
-
-/**
- * Log detailed analysis of progressive detection for debugging
- * @param {string} oldText - Previous caption text  
- * @param {string} newText - Current caption text
- * @param {Object} result - Detection result
- */
-function logProgressiveAnalysis(oldText, newText, result) {
-    if (Logger.shouldLog('DEBUG')) {
-        Logger.debug('Progressive Analysis:', {
-            oldText: `"${oldText}"`,
-            newText: `"${newText}"`,
-            oldLength: oldText.length,
-            newLength: newText.length,
-            lengthDiff: newText.length - oldText.length,
-            isProgressive: result.isProgressive,
-            confidence: result.confidence,
-            pattern: result.pattern,
-            startsWithOld: newText.startsWith(oldText),
-            oldWords: oldText.split(/\s+/).length,
-            newWords: newText.split(/\s+/).length
-        });
-    }
-}
-
-/**
- * Check if new text is a safe progressive update of old text
- * Uses whitelist of very specific patterns to minimize false positives
- * @param {string} oldText - Previous caption text
- * @param {string} newText - Current caption text
- * @returns {Object} {isProgressive: boolean, confidence: string, pattern: string}
- */
-function isWhitelistedProgressive(oldText, newText) {
-    if (!oldText || !newText) {
-        return {isProgressive: false, confidence: 'NONE', pattern: 'No text provided'};
-    }
-    
-    const oldTrimmed = normalizeTextForComparison(oldText);
-    const newTrimmed = normalizeTextForComparison(newText);
-    
-    // Prevent empty or very short text issues
-    if (oldTrimmed.length < MIN_TEXT_LENGTH_FOR_ANALYSIS() || newTrimmed.length < MIN_TEXT_LENGTH_FOR_ANALYSIS()) {
-        return {isProgressive: false, confidence: 'NONE', pattern: 'Text too short to analyze'};
-    }
-    
-    // Pattern 1a: Very short expansion (HIGH confidence) - for cases like "OK" -> "OK so"
-    if (oldTrimmed.length <= 5 && newTrimmed.startsWith(oldTrimmed) && newTrimmed.length > oldTrimmed.length) {
-        const addedText = newTrimmed.substring(oldTrimmed.length).trim();
-        if (addedText.length > 0 && addedText.length <= 10 && /^[\s\w]/.test(addedText)) {
-            const result = {
-                isProgressive: true, 
-                confidence: 'HIGH', 
-                pattern: `Short expansion: adds "${addedText}"`
-            };
-            logProgressiveAnalysis(oldText, newText, result);
-            return result;
-        }
-    }
-    
-    // Pattern 1b: Exact prefix expansion (VERY HIGH confidence)
-    if (newTrimmed.startsWith(oldTrimmed) && newTrimmed.length > oldTrimmed.length + MIN_PREFIX_EXPANSION_LENGTH()) {
-        // Additional safety: must end on word boundary
-        const addedText = newTrimmed.substring(oldTrimmed.length).trim();
-        if (addedText.length > 0 && /^[\s\w]/.test(addedText)) {
-            const result = {
-                isProgressive: true, 
-                confidence: 'VERY_HIGH', 
-                pattern: `Exact prefix expansion: adds "${addedText}"`
-            };
-            logProgressiveAnalysis(oldText, newText, result);
-            return result;
-        }
-    }
-    
-    // Pattern 2a: Simple punctuation addition (HIGH confidence) - for cases like "I" -> "I."
-    const punctuationRegex = /[.!?;,]$/;
-    if (oldTrimmed.length <= 10 && !punctuationRegex.test(oldTrimmed) && punctuationRegex.test(newTrimmed)) {
-        const oldWithoutPunct = oldTrimmed;
-        const newWithoutPunct = newTrimmed.replace(/[.!?;,]+$/, '').trim();
-        if (oldWithoutPunct === newWithoutPunct) {
-            const result = {
-                isProgressive: true,
-                confidence: 'HIGH',
-                pattern: `Simple punctuation addition`
-            };
-            logProgressiveAnalysis(oldText, newText, result);
-            return result;
-        }
-    }
-    
-    // Pattern 2b: Punctuation completion (HIGH confidence)
-    if (!punctuationRegex.test(oldTrimmed) && punctuationRegex.test(newTrimmed)) {
-        const oldWithoutPunct = normalizeTextForComparison(oldTrimmed.replace(/[.!?;,]+$/, ''));
-        const newWithoutPunct = normalizeTextForComparison(newTrimmed.replace(/[.!?;,]+$/, ''));
-        if (oldWithoutPunct === newWithoutPunct || newWithoutPunct.startsWith(oldWithoutPunct)) {
-            const result = {
-                isProgressive: true,
-                confidence: 'HIGH',
-                pattern: `Punctuation completion`
-            };
-            logProgressiveAnalysis(oldText, newText, result);
-            return result;
-        }
-    }
-    
-    // Pattern 3: Capitalization fix (HIGH confidence)
-    if (oldTrimmed.toLowerCase() === newTrimmed.toLowerCase() && oldTrimmed !== newTrimmed) {
-        const result = {
-            isProgressive: true,
-            confidence: 'HIGH', 
-            pattern: `Capitalization fix`
-        };
-        logProgressiveAnalysis(oldText, newText, result);
-        return result;
-    }
-    
-    // Pattern 4: Incomplete word completion (HIGH confidence)
-    // Handles cases like "Capt" -> "caption capture"
-    if (oldTrimmed.length >= 3 && newTrimmed.length > oldTrimmed.length) {
-        const oldWords = oldTrimmed.split(/\s+/);
-        const newWords = newTrimmed.split(/\s+/);
-        
-        // Check if old text ends with an incomplete word that gets completed
-        if (oldWords.length > 0 && newWords.length >= oldWords.length) {
-            const lastOldWord = oldWords[oldWords.length - 1];
-            const correspondingNewWord = newWords[oldWords.length - 1];
-            
-            // Check if the last word in old text is a prefix of the word in new text
-            if (lastOldWord.length >= 3 && 
-                correspondingNewWord && 
-                correspondingNewWord.toLowerCase().startsWith(lastOldWord.toLowerCase()) &&
-                correspondingNewWord.length > lastOldWord.length) {
-                
-                // Verify the rest of the old text matches
-                const oldPrefix = oldWords.slice(0, -1).join(' ');
-                const newPrefix = newWords.slice(0, oldWords.length - 1).join(' ');
-                
-                if (oldPrefix === newPrefix || oldWords.length === 1) {
-                    const result = {
-                        isProgressive: true,
-                        confidence: 'HIGH',
-                        pattern: `Incomplete word completion: "${lastOldWord}" -> "${correspondingNewWord}"`
-                    };
-                    logProgressiveAnalysis(oldText, newText, result);
-                    return result;
-                }
-            }
-        }
-    }
-    
-    // Pattern 5: Sentence continuation (MEDIUM confidence)
-    // Handles cases like "so yeah" -> "so yeah, let me see"
-    if (oldTrimmed.length >= 5 && newTrimmed.length > oldTrimmed.length) {
-        // Check if old text ends without proper sentence ending
-        const endsWithoutPunctuation = !/[.!?]$/.test(oldTrimmed);
-        const newHasContinuation = newTrimmed.startsWith(oldTrimmed);
-        
-        if (endsWithoutPunctuation && newHasContinuation) {
-            const continuation = newTrimmed.substring(oldTrimmed.length).trim();
-            const continuationWords = continuation.split(/\s+/).filter(w => w.length > 0);
-            
-            // Check for common continuation patterns (focused on most common words)
-            const startsWithContinuationWord = /^[,\s]*(and|but|so|then|let|maybe|I|we|you|they|he|she|it|the|a|an|to|for|of|in|on|at|with|by|from|up|out|if|when|where|what|how|why|who|which|that|this|there|here|now|just|only|also|even|still|yet|already|again|ok|okay|sure|actually|really|very|quite|pretty|rather|basically|well|right|good|bad|yes|no|like|want|need|have|get|give|take|put|make|do|go|come|see|know|think|say|tell|ask|feel|look|work|play|help|use|find|try|keep|show|start|begin|end|finish|continue|stop|leave|stay|move|turn|open|close|break|fix|clean|wash|cook|eat|drink|sleep|sit|stand|walk|run|drive|fly|swim|read|write|listen|hear|watch|learn|teach|understand|remember|forget|hope|wish|dream|believe|trust|worry|fear|care|matter|happen|change|live|die|love|hate|buy|sell|pay|cost|save|spend|win|lose|choose|decide|plan|build|create|develop|produce|provide|serve|send|receive|meet|include|support|follow|lead|control|manage|consider|discuss|explain|describe|compare|identify|encourage|suggest|require|expect|achieve|reach|accept|deal|argue|relate|involve|contain|exist|result|cause|appear|seem|become|remain|increase|decrease|improve|reduce|grow|shrink|expand|contract|rise|fall|climb|drop|push|pull|carry|hold|pick|cut|lock|unlock|throw|catch|hit|kick|touch|smell|taste|dance|sing|talk|speak|call|shout|whisper|laugh|cry|smile|frown|nod|shake|wave|point|grab|reach|stretch|bend|kneel|crawl|jump|skip|hop|march|jog|sprint|trot|gallop|slide|roll|spin|twist|turn|flip|fall|stumble|trip|slip|balance|lean|rest|relax|enjoy|celebrate|party|joke|tease|mock|praise|compliment|thank|apologize|forgive|excuse|blame|accuse|defend|protect|attack|fight|argue|discuss|debate|negotiate|compromise|agree|disagree|accept|reject|approve|disapprove|support|oppose|encourage|discourage|motivate|inspire|influence|persuade|convince|force|pressure|threaten|warn|advise|recommend|suggest|propose|offer|invite|welcome|greet|introduce|present|announce|declare|proclaim|state|claim|assert|insist|maintain|contend|dispute|challenge|question|doubt|wonder|suspect|assume|suppose|guess|estimate|calculate|measure|count|weigh|compare|contrast|match|fit|suit|belong|own|possess|contain|hold|include|comprise|consist|involve|concern|relate|connect|link|join|unite|combine|merge|mix|blend|separate|divide|split|share|distribute|spread|scatter|gather|collect|accumulate|store|save|keep|preserve|maintain|protect|defend|guard|secure|lock|unlock|open|close|shut|cover|uncover|hide|show|reveal|expose|display|present|exhibit|demonstrate|perform|act|play|dance|sing|music|art|paint|draw|write|read|study|learn|teach|educate|train|practice|exercise|work|job|career|profession|business|company|organization|institution|school|university|college|hospital|church|government|politics|law|legal|court|judge|jury|lawyer|attorney|doctor|nurse|teacher|student|child|adult|parent|family|friend)/.test(continuation);
-            
-            if (startsWithContinuationWord && continuationWords.length >= 1 && continuationWords.length <= 5) {
-                const result = {
-                    isProgressive: true,
-                    confidence: 'MEDIUM',
-                    pattern: `Sentence continuation: added "${continuation}"`
-                };
-                logProgressiveAnalysis(oldText, newText, result);
-                return result;
-            }
-        }
-    }
-    
-    // Pattern 6: Word-by-word building (HIGH confidence)
-    // New text adds 1-3 complete words to the end
-    if (newTrimmed.startsWith(oldTrimmed)) {
-        const addedPart = newTrimmed.substring(oldTrimmed.length).trim();
-        const addedWords = addedPart.split(/\s+/).filter(w => w.length > 0);
-        
-        if (addedWords.length >= 1 && addedWords.length <= 3) {
-            // Ensure it's adding real words, not just characters
-            const hasRealWords = addedWords.every(word => word.length >= 2 && /^[a-zA-Z]/.test(word));
-            if (hasRealWords) {
-                const result = {
-                    isProgressive: true,
-                    confidence: 'HIGH',
-                    pattern: `Word building: added "${addedWords.join(' ')}"`
-                };
-                logProgressiveAnalysis(oldText, newText, result);
-                return result;
-            }
-        }
-    }
-    
-    // No whitelisted pattern matched
-    const result = {isProgressive: false, confidence: 'NONE', pattern: 'No safe pattern detected'};
-    logProgressiveAnalysis(oldText, newText, result);
-    return result;
-}
-
-/**
- * Check if an entry is safe to remove based on age
- * Conservative approach: only remove very recent entries
- * @param {Object} entry - Transcript entry with Time property
- * @returns {boolean} True if safe to remove
- */
-function isSafeToRemove(entry) {
-    if (!entry.Time) return false;
-    
-    try {
-        // For safety, only remove entries added in the last 30 seconds
-        // Using a simple approach: compare the transcript array length and timing
-        // In a real implementation, you might want more sophisticated time tracking
-        
-        // If this is one of the last few entries added, it's probably recent
-        const entryIndex = transcriptArray.findIndex(e => e.ID === entry.ID);
-        const isRecent = entryIndex >= transcriptArray.length - SAFE_REMOVAL_RECENT_ENTRIES();
-        
-        return isRecent;
-    } catch (error) {
-        console.warn('Could not determine entry age, being conservative:', error);
-        return false; // Be conservative if we can't determine age
-    }
-}
-
-/**
- * Safely remove a progressive entry with logging and recovery capability
- * @param {number} index - Index of entry to remove
- * @param {string} reason - Reason for removal
- */
-function safelyRemoveEntry(index, reason) {
-    if (index < 0 || index >= transcriptArray.length) {
-        console.warn('Invalid index for removal:', index);
-        return false;
-    }
-    
-    const entry = transcriptArray[index];
-    
-    // Safety check
-    if (!isSafeToRemove(entry)) {
-        console.log(`⚠️  Entry not safe to remove: "${entry.Text}"`);
-        return false;
-    }
-    
-    // Add to recently removed for potential recovery
-    recentlyRemoved.unshift({
-        entry: {...entry},
-        removedAt: new Date().toISOString(),
-        reason: reason,
-        originalIndex: index
-    });
-    
-    // Keep only recent removals
-    if (recentlyRemoved.length > MAX_RECENTLY_REMOVED()) {
-        recentlyRemoved.pop();
-    }
-    
-    // Remove from transcript
-    transcriptArray.splice(index, 1);
-    console.log(`🗑️  Safely removed progressive entry: "${entry.Text}"`);
-    console.log(`   Reason: ${reason}`);
-    
-    return true;
-}
-
-/**
- * Check if exact caption already exists in transcript using optimized hash lookup
- * @param {string} name - Speaker name
- * @param {string} text - Caption text
- * @returns {boolean} True if exact caption exists
- */
-function isExactCaptionDuplicate(name, text) {
-    return captionManager.isDuplicateCaption(name, text);
-}
-
-/**
- * Handle progressive caption detection and removal with multi-entry checking
- * @param {string} name - Speaker name
- * @param {string} text - Caption text
- * @returns {boolean} True if progressive caption was handled
- */
-function handleProgressiveCaption(name, text) {
-    let removedAny = false;
-    let checkedEntries = 0;
-    const maxChecks = 3; // Check up to 3 recent entries from same speaker
-    
-    for (let i = transcriptArray.length - 1; i >= Math.max(0, transcriptArray.length - PROGRESSIVE_CHECK_LOOKBACK()) && checkedEntries < maxChecks; i--) {
-        const entry = transcriptArray[i];
-        
-        if (entry.Name === name) {
-            checkedEntries++;
-            const progressiveCheck = isWhitelistedProgressive(entry.Text, text);
-            
-            if (progressiveCheck.isProgressive) {
-                console.log(`  🔍 Whitelist match: ${progressiveCheck.pattern}`);
-                console.log(`  📊 Confidence: ${progressiveCheck.confidence}`);
-                
-                // Accept MEDIUM confidence for very recent entries (last 2), HIGH+ for older
-                const isVeryRecent = checkedEntries <= 2;
-                const confidenceThreshold = isVeryRecent ? 
-                    ['HIGH', 'VERY_HIGH', 'MEDIUM'] : 
-                    ['HIGH', 'VERY_HIGH'];
-                
-                if (confidenceThreshold.includes(progressiveCheck.confidence)) {
-                    const removed = safelyRemoveEntry(i, progressiveCheck.pattern);
-                    if (removed) {
-                        removedAny = true;
-                        // Continue checking for chain of progressive updates
-                        // but adjust indices since we removed an entry
-                        i++; // Compensate for the removed entry
-                    }
-                } else {
-                    console.log(`  ⚠️  Confidence too low for removal: ${progressiveCheck.confidence}`);
-                }
-            }
-        }
-    }
-    
-    return removedAny;
-}
-
-/**
- * Add new caption to transcript array with hash tracking
- * @param {string} name - Speaker name
- * @param {string} text - Caption text
- */
-function addCaptionToTranscript(name, text) {
-    const Time = new Date().toLocaleTimeString();
-    transcriptArray.push({ 
-        Name: name, 
-        Text: text, 
-        Time, 
-        ID: `caption_${transcriptIdCounter++}` 
-    });
-    
-    // Add to hash set for efficient duplicate detection
-    captionManager.addCaptionHash(name, text);
-    
-    // Add reliability safeguards
-    try {
-        // Backup to localStorage for crash recovery
-        if (transcriptArray.length % 100 === 0) {
-            localStorage.setItem('caption_saver_backup', JSON.stringify({
-                data: transcriptArray.slice(-500), // Keep last 500 entries as backup
-                timestamp: Date.now(),
-                meetingId: currentMeetingId
-            }));
-            Logger.debug(`Backup saved: ${transcriptArray.length} total captions`);
-        }
-    } catch (error) {
-        Logger.warn('Backup to localStorage failed:', error);
-        // Don't fail caption addition if backup fails
-    }
-    
-    // Enforce memory limits periodically (with zero-loss policy)
-    if (transcriptArray.length % MEMORY_CHECK_INTERVAL() === 0) {
-        enforceMemoryLimits();
-    }
-}
-
-/**
- * Smart caption addition with conservative whitelist approach and validation
- * @param {string} name - Speaker name
- * @param {string} text - Caption text
- * @returns {boolean} True if caption was added
- */
-function conservativeSmartAddCaption(name, text) {
-    // Validate input parameters
-    const validation = validateCaptionInput(name, text);
-    if (!validation.isValid) {
-        Logger.warn(`Invalid caption input: ${validation.error}`);
-        return false;
-    }
-    
-    // Sanitize input (remove potential dangerous characters)
-    const sanitizedName = name.trim().replace(/[\r\n\t]/g, ' ');
-    const sanitizedText = text.trim().replace(/[\r\n\t]/g, ' ');
-    
-    // Check if this exact caption already exists
-    if (isExactCaptionDuplicate(sanitizedName, sanitizedText)) {
-        Logger.debug(`Exact caption already exists: "${sanitizedText}"`);
-        return false;
-    }
-    
-    // Handle progressive caption detection and removal
-    const foundProgressive = handleProgressiveCaption(sanitizedName, sanitizedText);
-    
-    // Add the new caption
-    addCaptionToTranscript(sanitizedName, sanitizedText);
-    
-    // Update reliability tracking
-    captionManager.lastCaptionTime = Date.now();
-    captionManager.captionCount++;
-    
-    if (foundProgressive) {
-        Logger.info("Replaced progressive caption:", { Name: sanitizedName, Text: sanitizedText });
-    } else {
-        Logger.info("Added new caption:", { Name: sanitizedName, Text: sanitizedText });
-    }
-    
-    return true;
-}
-
-/**
- * Recovery function to restore recently removed entries
- * @param {number} count - Number of recent removals to restore (default: 1)
- */
-function restoreRecentlyRemoved(count = 1) {
-    const restored = [];
-    
-    for (let i = 0; i < Math.min(count, recentlyRemoved.length); i++) {
-        const removal = recentlyRemoved.shift();
-        
-        // Add back to transcript array
-        transcriptArray.push({
-            Name: removal.entry.Name,
-            Text: removal.entry.Text,
-            Time: removal.entry.Time,
-            ID: `caption_restored_${transcriptIdCounter++}`
+        data.capturing = true;
+        data.observer = new MutationObserver((mutations) => {
+            console.log('MutationObserver fired with', mutations.length, 'mutations');
+            captionProcessor.debouncedCheckCaptions();
         });
         
-        restored.push(removal.entry);
-        console.log(`↩️  Restored: "${removal.entry.Text}"`);
-    }
-    
-    return restored;
-}
-
-/**
- * Debounced caption checking to prevent race conditions
- */
-function debouncedCheckCaptions() {
-    // Clear existing timer
-    if (debounceTimer) {
-        clearTimeout(debounceTimer);
-    }
-    
-    // Set new timer
-    debounceTimer = setTimeout(() => {
-        if (!isProcessing) {
-            checkCaptions();
-        }
-    }, DEBOUNCE_DELAY());
-}
-
-/**
- * Retry mechanism for critical operations
- * @param {Function} operation - Function to retry
- * @param {number} maxRetries - Maximum number of retries
- * @param {string} operationName - Name of operation for logging
- */
-async function retryOperation(operation, maxRetries = MAX_RETRIES(), operationName = 'operation') {
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-            return await operation();
-        } catch (error) {
-            Logger.warn(`${operationName} failed on attempt ${attempt}/${maxRetries}:`, error);
-            
-            if (attempt === maxRetries) {
-                Logger.error(`${operationName} failed after ${maxRetries} attempts`, error);
-                throw error;
-            }
-            
-            // Exponential backoff
-            const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
-            await new Promise(resolve => setTimeout(resolve, delay));
-        }
-    }
-}
-
-/**
- * Safe DOM query with fallback selectors
- * @param {Element} container - Container to search in
- * @param {Array<string>} selectors - Array of selectors to try
- * @returns {Element|null} Found element or null
- */
-function safeDOMQuery(container, selectors) {
-    if (!container) return null;
-    
-    for (const selector of selectors) {
-        try {
-            const element = container.querySelector(selector);
-            if (element) return element;
-        } catch (error) {
-            Logger.debug(`Selector "${selector}" failed:`, error);
-        }
-    }
-    
-    return null;
-}
-
-/**
- * Main caption checking function with state-aware processing
- */
-function checkCaptions() {
-    // Prevent concurrent execution
-    if (isProcessing) {
-        Logger.debug("Caption processing already in progress, skipping...");
-        return;
-    }
-    
-    isProcessing = true;
-    
-    try {
-        Logger.debug("Checking for captions...");
+        data.observer.observe(closedCaptionsContainer, {
+            childList: true,
+            subtree: true,
+            characterData: true
+        });
         
-        // Check for meeting state changes
-        checkForMeetingStateChanges();
+        console.log("Observer set up, doing initial check...");
+        captionProcessor.debouncedCheckCaptions();
         
-        // Only process captions if we're in the right state
-        if (captionManager.meetingState !== MEETING_STATES.CAPTIONS_READY) {
-            Logger.debug(`Skipping caption processing - current state: ${captionManager.meetingState}`);
-            return;
-        }
+        // Set up a fallback timer to check periodically
+        stateManager.fallbackTimer = setInterval(() => {
+            console.log("Fallback timer check...");
+            captionProcessor.debouncedCheckCaptions();
+        }, config.TIMING.FALLBACK_TIMER_INTERVAL);
         
-        // Check if captions are available
-        const captionContainerSelectors = [
-            "[data-tid='closed-caption-renderer-wrapper']", // Teams v2 structure
-            "[data-tid='closed-captions-renderer']",         // Legacy structure
-            ".closed-captions-container",
-            "[data-testid='caption-container']"
-        ];
-        
-        const closedCaptionsContainer = safeDOMQuery(document, captionContainerSelectors);
-        if (!closedCaptionsContainer) {
-            Logger.debug("Caption container not found - captions may not be enabled");
-            // If we thought captions were ready but container is gone, update state
-            if (captionManager.meetingState === MEETING_STATES.CAPTIONS_READY) {
-                if (hasActiveMeetingIndicators()) {
-                    captionManager.transitionToState(MEETING_STATES.MEETING_ACTIVE, 'Caption container lost');
-                } else {
-                    captionManager.transitionToState(MEETING_STATES.CHAT, 'Caption container and meeting indicators lost');
-                }
-            }
-            return;
-        }
-        
-        // Determine processing mode based on current capture mode
-        if (captionManager.captureMode === 'snapshot') {
-            // Snapshot mode - let the snapshot monitoring handle it
-            Logger.debug("Using snapshot mode for caption processing");
-            // The snapshot monitoring system will handle caption capture
-            // This function just ensures captions are available
-            
-        } else {
-            // Fallback mode - use progressive detection approach
-            Logger.debug("Using progressive fallback mode for caption processing");
-            processWithProgressiveDetection(closedCaptionsContainer);
-        }
-        
-    } catch (error) {
-        Logger.error('Error in checkCaptions:', error);
-        // On error, switch to fallback mode for safety
-        captionManager.switchToFallbackMode('checkCaptions error');
-    } finally {
-        // Always reset processing flag
-        isProcessing = false;
-    }
-}
-
-/**
- * Process captions using progressive detection (fallback mode)
- * @param {Element} closedCaptionsContainer - Container element with captions
- */
-function processWithProgressiveDetection(closedCaptionsContainer) {
-    // Try multiple selectors for caption elements
-    const captionSelectors = [
-        '.fui-ChatMessageCompact',
-        '.caption-item',
-        '[data-tid="caption-text"]'
-    ];
-    
-    let transcripts = [];
-    for (const selector of captionSelectors) {
-        transcripts = closedCaptionsContainer.querySelectorAll(selector);
-        if (transcripts.length > 0) break;
-    }
-    
-    Logger.debug(`Found ${transcripts.length} caption elements in progressive mode`);
-    
-    if (transcripts.length === 0) {
-        Logger.debug("No caption elements found");
-        return;
-    }
-    
-    // Process each visible caption element using progressive detection
-    transcripts.forEach((transcript, index) => {
-        try {
-            // Try multiple selectors for author element
-            const authorSelectors = ['[data-tid="author"]', '.author', '.speaker'];
-            const authorElement = safeDOMQuery(transcript, authorSelectors);
-            if (!authorElement) return;
-            
-            const Name = authorElement.innerText?.trim();
-            if (!Name) return;
-            
-            // Try multiple selectors for text element
-            const textSelectors = ['[data-tid="closed-caption-text"]', '.caption-text', '.text'];
-            const textElement = safeDOMQuery(transcript, textSelectors);
-            if (!textElement) return;
-            
-            const Text = textElement.innerText?.trim();
-            if (!Text || Text.length === 0) return;
-            
-            // Use conservative whitelist approach for progressive detection
-            conservativeSmartAddCaption(Name, Text);
-            
-        } catch (error) {
-            Logger.error(`Error processing transcript ${index}:`, error);
-        }
-    });
-    
-    Logger.debug(`Current transcript array length: ${transcriptArray.length}`);
-}
-
-// State-aware transcription startup
-function startTranscription() {
-    try {
-        Logger.info("Starting transcription with state-aware detection");
-        
-        // Detect current meeting state
-        const currentState = detectMeetingState();
-        Logger.info(`Initial meeting state detected: ${currentState}`);
-        
-        // Initialize meeting tracking
-        captionManager.currentMeetingId = extractMeetingId();
-        
-        // Transition to detected state
-        captionManager.transitionToState(currentState, 'Initial state detection');
-        
-        // Handle initial state appropriately
-        switch (currentState) {
-            case MEETING_STATES.CHAT:
-                Logger.info("Currently in chat - monitoring for meeting activity");
-                scheduleNextCheck(5000); // Check again in 5 seconds
-                return false;
-                
-            case MEETING_STATES.JOINING:
-                Logger.info("Meeting join detected - monitoring for meeting start");
-                scheduleNextCheck(2000); // Check more frequently during join
-                return false;
-                
-            case MEETING_STATES.PRE_MEETING:
-                Logger.info("Pre-meeting state detected - monitoring for meeting activation");
-                scheduleNextCheck(3000); // Check every 3 seconds
-                return false;
-                
-            case MEETING_STATES.MEETING_ACTIVE:
-                Logger.info("Active meeting detected - looking for captions");
-                scheduleNextCheck(2000); // Check frequently for captions
-                return false;
-                
-            case MEETING_STATES.CAPTIONS_READY:
-                Logger.info("Captions ready - starting capture");
-                startCaptureSystem().then(success => {
-                    if (success) {
-                        Logger.info("Caption capture started successfully");
-                    } else {
-                        Logger.warn("Caption capture failed to start");
-                    }
-                });
-                return false; // Return false since we're starting async
-                
-            default:
-                Logger.warn(`Unknown meeting state: ${currentState}`);
-                scheduleNextCheck(5000);
-                return false;
-        }
-        
-    } catch (error) {
-        Logger.error('Error in startTranscription:', error);
-        showUserNotification('Failed to start caption capturing. Please refresh the page and try again.', 'error');
-        scheduleNextCheck(10000, true); // Retry in 10 seconds on error
-        return false;
-    }
-}
-
-/**
- * Schedule next transcription check
- * @param {number} delay - Delay in milliseconds
- * @param {boolean} isRetry - Whether this is a retry due to failure (default: false)
- */
-function scheduleNextCheck(delay, isRetry = false) {
-    // Only increment retry counter for actual failures, not normal state monitoring
-    if (isRetry) {
-        captionManager.retryCount = (captionManager.retryCount || 0) + 1;
-        
-        if (captionManager.retryCount > 20) {
-            Logger.error('Too many startTranscription retries (20+), stopping to prevent infinite loop');
-            Logger.error(`Current state: ${captionManager.meetingState}, capturing: ${captionManager.capturing}`);
-            showUserNotification('Caption system stopped due to repeated failures. Please refresh the page.', 'error');
-            return;
-        }
-    }
-    
-    setTimeout(() => {
-        // Only restart if we're not already capturing
-        if (!captionManager.capturing) {
-            startTranscription();
-        }
-    }, delay);
-}
-
-/**
- * Start the actual caption capture system
- * @returns {Promise<boolean>} True if capture started successfully
- */
-async function startCaptureSystem() {
-    try {
-        // Check if we already have a healthy observer
-        if (captionManager.ensureObserverHealth()) {
-            Logger.info("Observer is already healthy - reusing existing observer");
-            captionManager.capturing = true;
-            captionManager.retryCount = 0; // Reset retry counter on successful capture
-            
-            // Start the hybrid capture system if not already running
-            if (captionManager.captureMode === 'snapshot' && !captionManager.snapshotCheckTimer) {
-                Logger.info("Starting hybrid snapshot-based caption capture");
-                captionManager.startSnapshotMonitoring();
-            } else if (captionManager.captureMode !== 'snapshot') {
-                Logger.info("Using progressive fallback caption capture");
-            }
-            
-            // Do an initial check
-            checkCaptions();
-            Logger.info(`Caption capturing resumed successfully for meeting: ${captionManager.currentMeetingId} (Mode: ${captionManager.captureMode})`);
-            return true;
-        }
-        
-        // Use progressive container detection for better reliability
-        Logger.info("Searching for caption container using progressive detection");
-        const closedCaptionsContainer = await captionManager.waitForCaptionContainer(30000); // 30 second timeout
-        
-        if (!closedCaptionsContainer) {
-            Logger.warn("Caption container not found during capture startup");
-            // Transition back to meeting active state
-            captionManager.transitionToState(MEETING_STATES.MEETING_ACTIVE, 'Caption container not found during startup');
-            scheduleNextCheck(5000);
-            return false;
-        }
-
-        Logger.info("Caption container found - starting new capture system");
-
-        // Use smart observer management instead of aggressive cleanup
-        if (!captionManager.recreateObserver()) {
-            Logger.error("Failed to create observer for caption capture");
-            return false;
-        }
-        
-        captionManager.capturing = true;
-        captionManager.retryCount = 0; // Reset retry counter on successful capture
-        
-        // Add cleanup function
-        captionManager.cleanupFunctions.push(() => captionManager.cleanupCaptureResources());
-        
-        // Start the hybrid capture system
-        if (captionManager.captureMode === 'snapshot') {
-            Logger.info("Starting hybrid snapshot-based caption capture");
-            captionManager.startSnapshotMonitoring();
-        } else {
-            Logger.info("Starting progressive fallback caption capture");
-        }
-        
-        // Do an initial check
-        checkCaptions();
-        Logger.info(`Caption capturing started successfully for meeting: ${captionManager.currentMeetingId} (Mode: ${captionManager.captureMode})`);
-
         return true;
-    } catch (error) {
-        Logger.error('Error starting capture system:', error);
-        showUserNotification('Failed to start caption capture system. Please refresh the page and try again.', 'error');
-        return false;
-    }
-}
+    },
 
-/**
- * Display error message to user
- * @deprecated Use showUserNotification() instead
- */
-function showUserError(message) {
-    showUserNotification(message, 'error');
-}
-
-/**
- * Display notification to user with different types
- * @param {string} message - Message to display
- * @param {string} type - Notification type: 'error', 'warning', 'info', 'success'
- * @param {number} duration - Duration in milliseconds (default: 5000)
- */
-function showUserNotification(message, type = 'info', duration = 5000) {
-    const notification = document.createElement('div');
-    
-    // Different styles for different notification types
-    const styles = {
-        error: {
-            background: '#d32f2f',
-            color: 'white',
-            icon: '❌'
-        },
-        warning: {
-            background: '#ff9800',
-            color: 'white',
-            icon: '⚠️'
-        },
-        info: {
-            background: '#2196f3',
-            color: 'white',
-            icon: 'ℹ️'
-        },
-        success: {
-            background: '#4caf50',
-            color: 'white',
-            icon: '✅'
+    // Validate message structure
+    validateMessage(request) {
+        if (!request || typeof request !== 'object') {
+            return false;
         }
-    };
-    
-    const style = styles[type] || styles.info;
-    
-    notification.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        background: ${style.background};
-        color: ${style.color};
-        padding: 15px;
-        border-radius: 8px;
-        z-index: 10000;
-        max-width: 350px;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        font-size: 14px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        line-height: 1.4;
-        opacity: 0;
-        transform: translateX(100px);
-        transition: all 0.3s ease;
-    `;
-    
-    notification.innerHTML = `
-        <div style="display: flex; align-items: flex-start; gap: 10px;">
-            <span style="flex-shrink: 0; font-size: 16px;">${style.icon}</span>
-            <div>
-                <div style="font-weight: 600; margin-bottom: 2px;">MS Teams Caption Saver</div>
-                <div style="font-size: 13px; opacity: 0.9;">${message}</div>
-            </div>
-        </div>
-    `;
-    
-    document.body.appendChild(notification);
-    
-    // Animate in
-    setTimeout(() => {
-        notification.style.opacity = '1';
-        notification.style.transform = 'translateX(0)';
-    }, 50);
-    
-    // Auto-remove after duration
-    setTimeout(() => {
-        if (notification.parentNode) {
-            notification.style.opacity = '0';
-            notification.style.transform = 'translateX(100px)';
-            setTimeout(() => {
-                if (notification.parentNode) {
-                    notification.parentNode.removeChild(notification);
-                }
-            }, 300);
-        }
-    }, duration);
-}
-
-/**
- * Get state-specific user message
- * @param {string} state - Current meeting state
- * @returns {Object} Message object with text and type
- */
-function getStateSpecificMessage(state) {
-    const messages = {
-        [MEETING_STATES.CHAT]: {
-            text: "Monitoring for meeting activity...",
-            type: 'info'
-        },
-        [MEETING_STATES.JOINING]: {
-            text: "Joining meeting - preparing caption capture...",
-            type: 'info'
-        },
-        [MEETING_STATES.PRE_MEETING]: {
-            text: "In meeting lobby - waiting for meeting to start...",
-            type: 'info'
-        },
-        [MEETING_STATES.MEETING_ACTIVE]: {
-            text: "Meeting active - looking for captions to be enabled...",
-            type: 'info'
-        },
-        [MEETING_STATES.CAPTIONS_READY]: {
-            text: "Caption capture active and ready!",
-            type: 'success'
-        }
-    };
-    
-    return messages[state] || {
-        text: `Unknown state: ${state}`,
-        type: 'warning'
-    };
-}
-
-// Notification cooldown tracking to prevent spam during calls
-const notificationCooldowns = new Map();
-const NOTIFICATION_COOLDOWN_MS = () => config.get('UI.NOTIFICATION_COOLDOWN_MS');
-
-/**
- * Show state transition progress to user with cooldown protection
- * @param {string} fromState - Previous state
- * @param {string} toState - New state
- */
-function showStateTransitionProgress(fromState, toState) {
-    const message = getStateSpecificMessage(toState);
-    
-    // Only show certain transitions to avoid spam
-    const shouldShowTransition = [
-        MEETING_STATES.JOINING,
-        MEETING_STATES.PRE_MEETING,
-        MEETING_STATES.MEETING_ACTIVE,
-        MEETING_STATES.CAPTIONS_READY
-    ].includes(toState);
-    
-    if (shouldShowTransition) {
-        // Check cooldown to prevent repeated notifications for same state
-        const now = Date.now();
-        const lastNotificationTime = notificationCooldowns.get(toState) || 0;
         
-        if (now - lastNotificationTime >= NOTIFICATION_COOLDOWN_MS()) {
-            // Special handling for meeting states during calls to reduce interruption
-            let duration = config.get('UI.NOTIFICATION_DURATION.INFO'); // Default from config
+        const validMessages = ['return_transcript', 'get_captions_for_viewing', 'clear_transcript'];
+        return validMessages.includes(request.message);
+    },
+
+    // Handle extension messages
+    handleMessage(request, sender, sendResponse) {
+        const errorHandler = window.CaptionSaver.ErrorHandler;
+        
+        try {
+            console.log("Content script received message:", request);
             
-            // Reduce popup time for states that might repeat during calls
-            if (toState === MEETING_STATES.MEETING_ACTIVE) {
-                duration = Math.min(duration, 2000); // Shorter popup for meeting active states
+            // Validate message
+            if (!this.validateMessage(request)) {
+                const error = errorHandler.createOperationalError('Invalid message format', 'message-validation');
+                sendResponse({success: false, error: error.message});
+                return false;
             }
             
-            // Use appropriate duration based on message type
-            switch (message.type) {
-                case 'success':
-                    duration = config.get('UI.NOTIFICATION_DURATION.SUCCESS');
-                    break;
-                case 'warning':
-                    duration = config.get('UI.NOTIFICATION_DURATION.WARNING');
-                    break;
-                case 'error':
-                    duration = config.get('UI.NOTIFICATION_DURATION.ERROR');
-                    break;
-                default:
-                    duration = config.get('UI.NOTIFICATION_DURATION.INFO');
-            }
-            
-            showUserNotification(message.text, message.type, duration);
-            notificationCooldowns.set(toState, now);
-            Logger.info(`State transition notification: ${fromState} → ${toState}`);
-        } else {
-            Logger.debug(`Notification cooldown active for ${toState} (${Math.round((now - lastNotificationTime) / 1000)}s since last)`);
-        }
-    }
-}
-
-/**
- * Show detailed status information to user
- * @param {string} status - Status message
- * @param {string} details - Additional details
- */
-function showDetailedStatus(status, details) {
-    const message = details ? `${status}\n\n${details}` : status;
-    showUserNotification(message, 'info', 4000);
-}
-
-/**
- * Smart memory management that preserves captions while preventing browser crashes
- * CORE PRINCIPLE: NEVER delete captions without user consent
- */
-function enforceMemoryLimits() {
-    // Check if we're approaching the auto-save threshold
-    if (transcriptArray.length >= AUTO_SAVE_THRESHOLD() && transcriptArray.length % 1000 === 0) {
-        // Warn user and offer auto-save to prevent loss (single popup instead of notification + confirm)
-        const shouldAutoSave = confirm(
-            `You have ${transcriptArray.length} captions captured! ` +
-            `To prevent potential browser memory issues, would you like to save the current transcript? ` +
-            `(Selecting "OK" will save and continue capturing. Selecting "Cancel" will continue without saving.)`
-        );
-        
-        if (shouldAutoSave) {
-            // Trigger auto-save
-            try {
-                const meetingTitle = extractMeetingTitle() + "_auto_save_" + Date.now();
-                chrome.runtime.sendMessage({
-                    message: "download_captions",
-                    transcriptArray: transcriptArray.map(({ID, ...rest}) => rest),
-                    meetingTitle: meetingTitle
-                });
-                Logger.info(`Auto-saved ${transcriptArray.length} captions due to memory threshold`);
-                
-                // Show success notification
-                showUserNotification(
-                    `Auto-saved ${transcriptArray.length} captions successfully!`,
-                    'success',
-                    5000
-                );
-                
-                // Optionally clear after save (ask user)
-                setTimeout(() => {
-                    const shouldClear = confirm(
-                        "Transcript auto-saved successfully! " +
-                        "Would you like to clear the current data to start fresh? " +
-                        "(This will not affect your saved file)"
-                    );
-                    if (shouldClear) {
-                        resetTranscriptData();
-                        Logger.info("Transcript data cleared after auto-save");
-                        showUserNotification("Transcript data cleared - starting fresh!", 'success');
+            const stateManager = window.CaptionSaver.StateManager;
+            const captionProcessor = window.CaptionSaver.CaptionProcessor;
+            const data = window.CaptionSaver.Data;
+            switch (request.message) {
+                case 'return_transcript':
+                    console.log("return_transcript request received:", data.transcriptArray);
+                    
+                    console.log("Attempting to capture recent captions before download...");
+                    stateManager.triggerSilenceDetection('download-request');
+                    
+                    if (!data.capturing || data.transcriptArray.length === 0) {
+                        alert("Oops! No captions were captured. Please make sure captions are turned on.");
+                        sendResponse({success: false});
+                        return;
                     }
-                }, 1000);
-                
-            } catch (error) {
-                Logger.error("Auto-save failed:", error);
-                showUserNotification("Auto-save failed. Please manually save your captions to prevent loss.", 'error');
-            }
-        }
-    }
-    
-    // CRITICAL: Only enforce hard limit at much higher threshold and with user warning
-    if (transcriptArray.length > MAX_TRANSCRIPT_ENTRIES()) {
-        Logger.warn(`CRITICAL: Transcript array has reached ${transcriptArray.length} entries`);
-        showUserNotification(
-            `CRITICAL: You have ${transcriptArray.length} captions! ` +
-            `Please save your transcript immediately to prevent potential browser crashes. ` +
-            `Use the extension popup to save your captions.`,
-            'error',
-            15000 // Show for 15 seconds
-        );
-        
-        // DO NOT automatically delete captions - let user decide
-        // If browser crashes, that's better than silent data loss
-    }
-    
-    // Limit recentlyRemoved array size (this is safe to trim as it's just for recovery)
-    if (recentlyRemoved.length > MAX_RECENTLY_REMOVED()) {
-        recentlyRemoved.splice(MAX_RECENTLY_REMOVED());
-        Logger.debug(`Trimmed recentlyRemoved array to ${MAX_RECENTLY_REMOVED()} entries`);
-    }
-}
 
-/**
- * Extract a clean meeting title for auto-save
- */
-function extractMeetingTitle() {
-    try {
-        if (document && document.title) {
-            const title = document.title.replace("__Microsoft_Teams", '').replace(/[^a-z0-9\s]/gi, '').trim();
-            return title || 'teams_meeting';
-        }
-        return 'teams_meeting';
-    } catch (error) {
-        Logger.error('Error extracting meeting title:', error);
-        return 'teams_meeting';
-    }
-}
-
-/**
- * Clean up observer and prevent memory leaks
- * @deprecated Use captionManager.cleanupCaptureResources() instead
- */
-function cleanupObserver() {
-    // Redirect to the new smart cleanup system
-    captionManager.cleanupCaptureResources();
-    Logger.info("🧹 Observer cleanup completed via captionManager");
-}
-
-/**
- * Clean up all resources
- */
-function cleanupAll() {
-    cleanupObserver();
-    
-    // Run all registered cleanup functions
-    cleanupFunctions.forEach(cleanup => {
-        try {
-            cleanup();
-        } catch (error) {
-            console.error("Error during cleanup:", error);
-        }
-    });
-    
-    cleanupFunctions.length = 0;
-    console.log("🧹 All resources cleaned up");
-}
-
-/**
- * Reset transcript data and all tracking structures
- */
-function resetTranscriptData() {
-    transcriptArray.length = 0;
-    transcriptIdCounter = 0;
-    recentlyRemoved.length = 0;
-    captionManager.captionHashSet.clear();
-    Logger.info("Transcript data reset");
-}
-
-/**
- * Comprehensive test function to validate all functionality
- * Only runs in development/testing environments
- */
-function runComprehensiveTests() {
-    const tests = [];
-    let passedTests = 0;
-    let failedTests = 0;
-    
-    function test(name, testFunction) {
-        try {
-            const result = testFunction();
-            if (result === true || result === undefined) {
-                tests.push({ name, status: 'PASS' });
-                passedTests++;
-                Logger.debug(`✅ TEST PASS: ${name}`);
-            } else {
-                tests.push({ name, status: 'FAIL', error: result });
-                failedTests++;
-                Logger.error(`❌ TEST FAIL: ${name} - ${result}`);
-            }
-        } catch (error) {
-            tests.push({ name, status: 'ERROR', error: error.message });
-            failedTests++;
-            Logger.error(`💥 TEST ERROR: ${name} - ${error.message}`);
-        }
-    }
-    
-    // Test 1: CaptionManager initialization
-    test('CaptionManager initialization', () => {
-        return captionManager && 
-               captionManager.transcriptArray &&
-               captionManager.captionHashSet instanceof Set;
-    });
-    
-    // Test 2: Variable synchronization
-    test('Variable synchronization', () => {
-        const originalLength = transcriptArray.length;
-        captionManager.transcriptArray.push({ test: true });
-        const newLength = transcriptArray.length;
-        captionManager.transcriptArray.pop(); // cleanup
-        return newLength === originalLength + 1;
-    });
-    
-    // Test 3: Input validation
-    test('Input validation - valid input', () => {
-        const result = validateCaptionInput("Test User", "Test message");
-        return result.isValid === true;
-    });
-    
-    test('Input validation - empty name', () => {
-        const result = validateCaptionInput("", "Test message");
-        return result.isValid === false && result.error.includes('empty');
-    });
-    
-    test('Input validation - invalid type', () => {
-        const result = validateCaptionInput(null, "Test message");
-        return result.isValid === false && result.error.includes('strings');
-    });
-    
-    test('Input validation - too long', () => {
-        const longText = 'a'.repeat(6000);
-        const result = validateCaptionInput("User", longText);
-        return result.isValid === false && result.error.includes('too long');
-    });
-    
-    // Test 4: Hash functionality
-    test('Hash generation and deduplication', () => {
-        const hash1 = captionManager.generateCaptionHash("User", "Message");
-        const hash2 = captionManager.generateCaptionHash("User", "Message");
-        const hash3 = captionManager.generateCaptionHash("User", "Different");
-        return hash1 === hash2 && hash1 !== hash3;
-    });
-    
-    // Test 5: Logger functionality
-    test('Logger levels', () => {
-        const originalLevel = Logger.level;
-        Logger.level = 'ERROR';
-        const shouldNotLog = Logger.shouldLog('DEBUG');
-        const shouldLog = Logger.shouldLog('ERROR');
-        Logger.level = originalLevel; // restore
-        return !shouldNotLog && shouldLog;
-    });
-    
-    // Test 6: Safe DOM query with fallbacks
-    test('Safe DOM query fallbacks', () => {
-        const mockContainer = document.createElement('div');
-        mockContainer.innerHTML = '<span class="test">content</span>';
-        const result = safeDOMQuery(mockContainer, ['nonexistent', '.test']);
-        return result && result.textContent === 'content';
-    });
-    
-    // Test 7: Memory limit enforcement
-    test('Memory limit enforcement', () => {
-        const originalLength = transcriptArray.length;
-        const originalHashSize = captionManager.captionHashSet.size;
-        
-        // Add test entries
-        for (let i = 0; i < 5; i++) {
-            addCaptionToTranscript(`TestUser${i}`, `Test message ${i}`);
-        }
-        
-        // Check they were added
-        const afterAdd = transcriptArray.length === originalLength + 5;
-        const hashAfterAdd = captionManager.captionHashSet.size === originalHashSize + 5;
-        
-        // Force memory limit (temporarily lower the limit)
-        const originalLimit = MAX_TRANSCRIPT_ENTRIES;
-        Object.defineProperty(window, 'MAX_TRANSCRIPT_ENTRIES', { value: originalLength + 2, writable: true });
-        
-        enforceMemoryLimits();
-        
-        const afterLimit = transcriptArray.length === originalLength + 2;
-        
-        // Restore original limit
-        Object.defineProperty(window, 'MAX_TRANSCRIPT_ENTRIES', { value: originalLimit, writable: true });
-        
-        // Cleanup test data
-        resetTranscriptData();
-        
-        return afterAdd && hashAfterAdd && afterLimit;
-    });
-    
-    // Test 8: Progressive caption detection
-    test('Progressive caption detection', () => {
-        const result1 = isWhitelistedProgressive("Hello", "Hello world");
-        const result2 = isWhitelistedProgressive("Hello", "Goodbye");
-        return result1.isProgressive === true && result2.isProgressive === false;
-    });
-    
-    // Test 9: Cleanup functions
-    test('Cleanup functions', () => {
-        const testCleanupCalled = { value: false };
-        cleanupFunctions.push(() => { testCleanupCalled.value = true; });
-        cleanupAll();
-        return testCleanupCalled.value === true;
-    });
-    
-    // Test 10: Error boundary in conservativeSmartAddCaption
-    test('Error handling in conservativeSmartAddCaption', () => {
-        const result1 = conservativeSmartAddCaption("", ""); // Should fail validation
-        const result2 = conservativeSmartAddCaption("Valid User", "Valid message"); // Should succeed
-        const result3 = conservativeSmartAddCaption("Valid User", "Valid message"); // Should be duplicate
-        
-        // Cleanup
-        resetTranscriptData();
-        
-        return result1 === false && result2 === true && result3 === false;
-    });
-    
-    // Test 11: XSS Prevention and Input Sanitization
-    test('XSS prevention', () => {
-        const xssAttempts = [
-            '<script>alert("xss")</script>',
-            'javascript:alert("xss")',
-            '<img src=x onerror=alert("xss")>',
-            '"><script>alert("xss")</script>',
-            '\'><script>alert("xss")</script>'
-        ];
-        
-        let allSafe = true;
-        xssAttempts.forEach(xss => {
-            const result = conservativeSmartAddCaption("TestUser", xss);
-            // Check if the sanitized version doesn't contain script tags
-            const lastEntry = transcriptArray[transcriptArray.length - 1];
-            if (lastEntry && lastEntry.Text.includes('<script')) {
-                allSafe = false;
-            }
-        });
-        
-        // Cleanup
-        resetTranscriptData();
-        return allSafe;
-    });
-    
-    // Test 12: Chrome API Error Handling
-    test('Chrome API error handling', () => {
-        // Temporarily mock chrome API to simulate error
-        const originalChrome = chrome;
-        window.chrome = {
-            runtime: {
-                onMessage: {
-                    addListener: () => { throw new Error("Mock API error"); }
-                }
-            }
-        };
-        
-        let errorHandled = false;
-        try {
-            chrome.runtime.onMessage.addListener(() => {});
-        } catch (error) {
-            errorHandled = true;
-        }
-        
-        // Restore original chrome object
-        window.chrome = originalChrome;
-        return errorHandled;
-    });
-    
-    // Test 13: Large dataset performance
-    test('Large dataset handling', () => {
-        const startTime = performance.now();
-        
-        // Add a large number of captions
-        for (let i = 0; i < 100; i++) {
-            conservativeSmartAddCaption(`User${i}`, `Message number ${i} with some content`);
-        }
-        
-        const endTime = performance.now();
-        const duration = endTime - startTime;
-        
-        // Check that it completed in reasonable time (< 1 second)
-        const performanceOk = duration < 1000;
-        
-        // Check that deduplication still works
-        const beforeDuplicate = transcriptArray.length;
-        conservativeSmartAddCaption("User1", "Message number 1 with some content");
-        const afterDuplicate = transcriptArray.length;
-        const deduplicationWorks = beforeDuplicate === afterDuplicate;
-        
-        // Cleanup
-        resetTranscriptData();
-        
-        return performanceOk && deduplicationWorks;
-    });
-    
-    // Test 14: DOM selector resilience
-    test('DOM selector resilience', () => {
-        const mockElement = document.createElement('div');
-        
-        // Test with various malformed selectors
-        const badSelectors = [
-            '',
-            ':::invalid:::',
-            '[data-test="unclosed',
-            '.class..double-dot',
-            '#id#duplicate'
-        ];
-        
-        let allHandled = true;
-        badSelectors.forEach(selector => {
-            try {
-                const result = safeDOMQuery(mockElement, [selector]);
-                // Should return null without throwing
-                if (result !== null) allHandled = false;
-            } catch (error) {
-                // Should not throw errors
-                allHandled = false;
-            }
-        });
-        
-        return allHandled;
-    });
-    
-    // Test 15: Memory cleanup verification
-    test('Memory cleanup verification', () => {
-        // Add some data
-        conservativeSmartAddCaption("TestUser", "Test message");
-        
-        // Add some cleanup functions
-        const cleanupCalled = { value: 0 };
-        cleanupFunctions.push(() => cleanupCalled.value++);
-        cleanupFunctions.push(() => cleanupCalled.value++);
-        
-        // Verify data exists
-        const hasData = transcriptArray.length > 0 && captionManager.captionHashSet.size > 0;
-        
-        // Run cleanup
-        cleanupAll();
-        
-        // Verify cleanup was called
-        const cleanupExecuted = cleanupCalled.value === 2;
-        
-        // Reset and verify data is cleared
-        resetTranscriptData();
-        const dataCleared = transcriptArray.length === 0 && captionManager.captionHashSet.size === 0;
-        
-        return hasData && cleanupExecuted && dataCleared;
-    });
-    
-    // Test 16: Debouncing effectiveness
-    test('Debouncing effectiveness', () => {
-        let callCount = 0;
-        const originalCheckCaptions = checkCaptions;
-        
-        // Mock checkCaptions to count calls
-        window.checkCaptions = () => { callCount++; };
-        
-        // Trigger multiple rapid calls
-        for (let i = 0; i < 5; i++) {
-            debouncedCheckCaptions();
-        }
-        
-        // Wait for debounce to complete
-        return new Promise((resolve) => {
-            setTimeout(() => {
-                const debounceWorked = callCount === 1; // Should only be called once
-                
-                // Restore original function
-                window.checkCaptions = originalCheckCaptions;
-                
-                resolve(debounceWorked);
-            }, DEBOUNCE_DELAY + 100);
-        });
-    });
-    
-    // Test results summary
-    const totalTests = tests.length;
-    Logger.info(`\n=== TEST RESULTS ===`);
-    Logger.info(`Total Tests: ${totalTests}`);
-    Logger.info(`Passed: ${passedTests}`);
-    Logger.info(`Failed: ${failedTests}`);
-    Logger.info(`Success Rate: ${((passedTests / totalTests) * 100).toFixed(1)}%`);
-    
-    if (failedTests > 0) {
-        Logger.error('Failed tests:');
-        tests.filter(t => t.status !== 'PASS').forEach(t => {
-            Logger.error(`- ${t.name}: ${t.error || t.status}`);
-        });
-    }
-    
-    // Test 17: Message handling robustness
-    test('Message handling robustness', () => {
-        let allHandled = true;
-        
-        // Test various malformed requests
-        const malformedRequests = [
-            null,
-            undefined,
-            {},
-            { message: null },
-            { message: "" },
-            { message: "unknown_command" },
-            { message: "return_transcript", extraData: "unexpected" }
-        ];
-        
-        malformedRequests.forEach(request => {
-            try {
-                // Simulate the message listener logic
-                if (!request || !request.message) {
-                    // Should handle gracefully
-                    return;
-                }
-                
-                switch (request.message) {
-                    case 'return_transcript':
-                    case 'get_captions_for_viewing':
-                    case 'reset_transcript':
-                        // Valid messages should be handled
-                        break;
-                    default:
-                        // Unknown messages should be handled gracefully
-                        break;
-                }
-            } catch (error) {
-                allHandled = false;
-                Logger.error('Message handling failed:', error);
-            }
-        });
-        
-        return allHandled;
-    });
-    
-    // Test 18: ConfigManager functionality
-    test('ConfigManager functionality', () => {
-        // Test basic get/set functionality
-        const originalValue = config.get('CAPTIONS.DEBOUNCE_DELAY');
-        const testValue = originalValue + 100;
-        
-        config.set('CAPTIONS.DEBOUNCE_DELAY', testValue);
-        const retrievedValue = config.get('CAPTIONS.DEBOUNCE_DELAY');
-        
-        // Restore original value
-        config.set('CAPTIONS.DEBOUNCE_DELAY', originalValue);
-        
-        // Test configuration validation
-        let validationFailed = false;
-        try {
-            config.set('INVALID.PATH', 123);
-        } catch (error) {
-            validationFailed = true;
-        }
-        
-        return retrievedValue === testValue && validationFailed;
-    });
-    
-    // Test 19: Safe state transitions
-    test('Safe state transitions', () => {
-        const originalState = captionManager.meetingState;
-        
-        // Test normal transition
-        const result1 = captionManager.transitionToState(MEETING_STATES.JOINING, 'Test transition');
-        const newState1 = captionManager.meetingState;
-        
-        // Test concurrent transition (should be queued)
-        captionManager.isTransitioning = true; // Simulate active transition
-        const result2 = captionManager.transitionToState(MEETING_STATES.PRE_MEETING, 'Concurrent test');
-        const queueLength = captionManager.getPendingTransitionCount();
-        captionManager.isTransitioning = false; // Reset
-        
-        // Restore original state
-        captionManager.transitionToState(originalState, 'Test cleanup', true);
-        
-        return result1 === true && 
-               newState1 === MEETING_STATES.JOINING && 
-               result2 === false && 
-               queueLength > 0;
-    });
-    
-    // Test 20: Dynamic constants
-    test('Dynamic constants', () => {
-        // Test that constants are functions that use config
-        const debounceDelay1 = DEBOUNCE_DELAY();
-        config.set('CAPTIONS.DEBOUNCE_DELAY', debounceDelay1 + 50);
-        const debounceDelay2 = DEBOUNCE_DELAY();
-        
-        // Restore original
-        config.set('CAPTIONS.DEBOUNCE_DELAY', debounceDelay1);
-        
-        return typeof DEBOUNCE_DELAY === 'function' && 
-               debounceDelay2 === debounceDelay1 + 50;
-    });
-    
-    // Test 21: Resource leak detection
-    test('Resource leak detection', () => {
-        const initialTimers = setTimeout(() => {}, 0); // Get current timer count approximation
-        clearTimeout(initialTimers);
-        
-        // Create and cleanup resources multiple times
-        for (let i = 0; i < 10; i++) {
-            startTranscription();
-            cleanupObserver();
-        }
-        
-        // Add some debounced calls
-        for (let i = 0; i < 5; i++) {
-            debouncedCheckCaptions();
-        }
-        
-        // Cleanup everything
-        cleanupAll();
-        
-        // Check that no timers are left hanging
-        const hasNoActiveTimer = debounceTimer === null;
-        const hasNoObserver = observer === null;
-        const cleanupFunctionsEmpty = cleanupFunctions.length === 0;
-        
-        return hasNoActiveTimer && hasNoObserver && cleanupFunctionsEmpty;
-    });
-    
-    return { total: totalTests, passed: passedTests, failed: failedTests, tests };
-}
-
-/**
- * Attempt to recover captions from localStorage backup in case of crash/reload
- */
-function attemptCrashRecovery() {
-    try {
-        const backup = localStorage.getItem('caption_saver_backup');
-        if (backup) {
-            const backupData = JSON.parse(backup);
-            const backupAge = Date.now() - backupData.timestamp;
-            
-            // Only recover if backup is less than 4 hours old
-            if (backupAge < 4 * 60 * 60 * 1000 && backupData.data && backupData.data.length > 0) {
-                const shouldRecover = confirm(
-                    `Found ${backupData.data.length} backed-up captions from a previous session. ` +
-                    `Would you like to restore them? ` +
-                    `(Meeting: ${backupData.meetingId || 'Unknown'})`
-                );
-                
-                if (shouldRecover) {
-                    // Restore backup data
-                    backupData.data.forEach(entry => {
-                        transcriptArray.push(entry);
-                        captionManager.addCaptionHash(entry.Name, entry.Text);
-                    });
+                    const orderedForDownload = captionProcessor.sortTranscriptsByScreenOrder();
                     
-                    Logger.info(`Recovered ${backupData.data.length} captions from backup`);
-                    showUserNotification(
-                        `Successfully recovered ${backupData.data.length} captions from previous session!`,
-                        'success',
-                        8000
-                    );
-                    
-                    // Clear the backup since it's been restored
-                    localStorage.removeItem('caption_saver_backup');
-                }
-            } else if (backupAge >= 4 * 60 * 60 * 1000) {
-                // Clear old backups
-                localStorage.removeItem('caption_saver_backup');
-                Logger.debug('Cleared old backup data');
-            }
-        }
-    } catch (error) {
-        Logger.warn('Error during crash recovery:', error);
-        // Don't fail startup if recovery fails
-    }
-}
-
-/**
- * Enhanced observer reliability with state-aware grace periods
- */
-function ensureObserverReliability() {
-    // State-specific health check intervals from configuration
-    const healthCheckIntervals = {
-        [MEETING_STATES.CHAT]: config.get('HEALTH.CHECK_INTERVALS.CHAT'),
-        [MEETING_STATES.JOINING]: config.get('HEALTH.CHECK_INTERVALS.JOINING'),
-        [MEETING_STATES.PRE_MEETING]: config.get('HEALTH.CHECK_INTERVALS.PRE_MEETING'),
-        [MEETING_STATES.MEETING_ACTIVE]: config.get('HEALTH.CHECK_INTERVALS.MEETING_ACTIVE'),
-        [MEETING_STATES.CAPTIONS_READY]: config.get('HEALTH.CHECK_INTERVALS.CAPTIONS_READY')
-    };
-    
-    let currentInterval = null;
-    
-    function scheduleHealthCheck() {
-        if (currentInterval) {
-            clearInterval(currentInterval);
-        }
-        
-        const interval = healthCheckIntervals[captionManager.meetingState] || 30000;
-        Logger.debug(`Scheduling health check for state ${captionManager.meetingState} every ${interval}ms`);
-        
-        currentInterval = setInterval(() => {
-            performStateAwareHealthCheck();
-        }, interval);
-    }
-    
-    // Initial health check setup
-    scheduleHealthCheck();
-    
-    // Update interval when state changes
-    const originalTransitionToState = captionManager.transitionToState;
-    captionManager.transitionToState = function(newState, reason) {
-        originalTransitionToState.call(this, newState, reason);
-        scheduleHealthCheck();
-    };
-}
-
-/**
- * Perform health check that respects transition states and grace periods
- */
-function performStateAwareHealthCheck() {
-    try {
-        // Skip health checks during transition grace periods
-        if (captionManager.isInTransitionGracePeriod()) {
-            Logger.debug('Skipping health check during transition grace period');
-            return;
-        }
-        
-        // Only perform caption flow checks if we're in the right state
-        if (captionManager.meetingState !== MEETING_STATES.CAPTIONS_READY) {
-            Logger.debug(`Skipping caption flow check - current state: ${captionManager.meetingState}`);
-            return;
-        }
-        
-        // Check observer health
-        if (captionManager.capturing && !captionManager.checkObserverHealth()) {
-            Logger.warn('Observer health check failed - attempting recovery');
-            
-            // Try to restore observer health
-            if (captionManager.ensureObserverHealth()) {
-                Logger.info('Observer health restored successfully');
-            } else {
-                Logger.error('Failed to restore observer health');
-                // Transition to meeting active state - captions may need to be re-enabled
-                captionManager.transitionToState(MEETING_STATES.MEETING_ACTIVE, 'Observer health check failed');
-            }
-            return;
-        }
-        
-        // Check caption flow - only if we've been in captions ready state for a while
-        const timeInCurrentState = captionManager.getTimeSinceTransition();
-        if (timeInCurrentState < 2 * 60 * 1000) { // Less than 2 minutes in current state
-            Logger.debug('Skipping caption flow check - recently transitioned to captions ready');
-            return;
-        }
-        
-        checkCaptionFlow();
-        
-    } catch (error) {
-        Logger.error('Error in state-aware health check:', error);
-    }
-}
-
-/**
- * Check if captions are flowing properly
- */
-function checkCaptionFlow() {
-    const timeSinceLastCaption = Date.now() - captionManager.lastCaptionTime;
-    
-    // Check for caption elements in both v2 and legacy structures
-    const captionElements = document.querySelectorAll(
-        "[data-tid='closed-caption-renderer-wrapper'] .fui-ChatMessageCompact, " +
-        "[data-tid='closed-captions-renderer'] .fui-ChatMessageCompact"
-    );
-    
-    const captionFlowStoppedThreshold = config.get('HEALTH.CAPTION_FLOW_TIMEOUT');
-    
-    // If we haven't captured captions in 5 minutes but DOM shows captions exist, there's an issue
-    if (timeSinceLastCaption > captionFlowStoppedThreshold && captionElements.length > 0) {
-        Logger.warn(`Caption flow issue detected: ${Math.round(timeSinceLastCaption/60000)} minutes since last caption, but ${captionElements.length} caption elements visible`);
-        
-        // Try to fix the issue first
-        if (captionManager.ensureObserverHealth()) {
-            Logger.info('Observer health restored - caption flow should resume');
-        } else {
-            // If we can't fix it, notify user and restart
-            Logger.error('Cannot restore observer health - notifying user and restarting');
-            
-            showUserNotification(
-                `Caption capture appears to have stopped. ` +
-                `No captions captured for ${Math.round(timeSinceLastCaption/60000)} minutes. ` +
-                `Attempting to restart...`,
-                'warning'
-            );
-            
-            // Restart the entire system
-            restartCaptureSystem();
-        }
-    } else if (timeSinceLastCaption > captionFlowStoppedThreshold) {
-        // No captions captured and no caption elements visible - probably no one is talking
-        Logger.debug(`No caption activity for ${Math.round(timeSinceLastCaption/60000)} minutes, but no caption elements visible - this is normal during silence`);
-    }
-}
-
-/**
- * Restart the capture system gracefully
- */
-function restartCaptureSystem() {
-    try {
-        Logger.info('Restarting caption capture system');
-        
-        // Clean up current system
-        captionManager.cleanupCaptureResources();
-        
-        // Transition to meeting active state and let the system detect captions again
-        captionManager.transitionToState(MEETING_STATES.MEETING_ACTIVE, 'Caption flow restart');
-        
-        // Schedule restart
-        setTimeout(() => {
-            startTranscription();
-            Logger.info('Caption capture system restarted');
-        }, 2000);
-        
-    } catch (error) {
-        Logger.error('Error restarting capture system:', error);
-    }
-}
-
-/**
- * Periodic health check to ensure capture is working
- * @deprecated Use ensureObserverReliability() instead
- */
-function performHealthCheck() {
-    setInterval(() => {
-        if (captionManager.capturing) {
-            const stats = {
-                totalCaptions: transcriptArray.length,
-                captureRate: captionManager.captionCount,
-                timeSinceLastCaption: Date.now() - captionManager.lastCaptionTime,
-                observerActive: !!captionManager.observer,
-                meetingState: captionManager.meetingState,
-                timeInState: captionManager.getTimeSinceTransition(),
-                isInGracePeriod: captionManager.isInTransitionGracePeriod(),
-                containerExists: !!(safeDOMQuery(document, [
-                    "[data-tid='closed-caption-renderer-wrapper']",
-                    "[data-tid='closed-captions-renderer']"
-                ]))
-            };
-            
-            Logger.debug('Legacy Health Check:', stats);
-            
-            // Only alert if not in grace period and in captions ready state
-            if (!stats.isInGracePeriod && 
-                captionManager.meetingState === MEETING_STATES.CAPTIONS_READY &&
-                stats.timeSinceLastCaption > 10 * 60 * 1000 && 
-                stats.containerExists) {
-                Logger.warn('Potential caption capture issue detected in legacy health check');
-            }
-        }
-    }, 60000); // Every minute
-}
-
-// Attempt crash recovery first
-attemptCrashRecovery();
-
-// Start the extension
-startTranscription();
-
-// Ensure long-term reliability
-ensureObserverReliability();
-
-// Enhanced logging for debugging
-Logger.info('=== Teams Caption Saver - State-Aware Architecture Initialized ===');
-Logger.info(`Extension version: ${chrome.runtime.getManifest ? chrome.runtime.getManifest().version : 'unknown'}`);
-Logger.info(`Meeting ID: ${captionManager.currentMeetingId || 'not detected'}`);
-Logger.info(`Initial state: ${captionManager.meetingState}`);
-Logger.info(`URL: ${window.location.href}`);
-Logger.info(`Timestamp: ${new Date().toISOString()}`);
-Logger.info(`Configuration loaded: ${Object.keys(config.dump()).length} settings`);
-Logger.info(`Debug mode: ${config.get('DEBUG.LOG_LEVEL')}`);
-Logger.info('==============================================================');
-
-// Run tests only if in development mode (check for console availability and development indicators)
-if (typeof console !== 'undefined' && 
-    (window.location.hostname === 'localhost' || 
-     window.location.search.includes('debug=true') ||
-     localStorage.getItem('caption_saver_debug') === 'true')) {
-    
-    // Delay test execution to allow initialization
-    setTimeout(() => {
-        Logger.level = 'DEBUG'; // Enable debug logging for tests
-        Logger.info('Running comprehensive tests...');
-        const testResults = runComprehensiveTests();
-        
-        // Store test results for inspection
-        window.captionSaverTestResults = testResults;
-        
-        if (testResults.failed === 0) {
-            Logger.info('🎉 All tests passed! Extension is ready for production.');
-        } else {
-            Logger.warn(`⚠️ ${testResults.failed} tests failed. Please review before deployment.`);
-        }
-    }, 1000);
-}
-
-// Expose configuration for debugging (only in debug mode)
-if (config.get('DEBUG.LOG_LEVEL') === 'DEBUG') {
-    window.captionSaverConfig = config;
-    window.captionManager = captionManager;
-    Logger.info('Debug objects exposed: window.captionSaverConfig, window.captionManager');
-}
-
-// Add cleanup on page unload to prevent memory leaks
-// Allow brief delay to capture final captions before cleanup
-window.addEventListener('beforeunload', (event) => {
-    // Force a final processing cycle to capture any pending captions
-    if (captionManager.capturing && captionManager.observer) {
-        try {
-            captionManager.processNewCaptions();
-            
-            // Force a final backup to preserve last captions
-            if (captionManager.transcriptArray.length > 0) {
-                captionManager.backupToLocalStorage();
-                Logger.info('Final backup completed before page unload');
-            }
-        } catch (error) {
-            Logger.warn('Error during final caption processing:', error);
-        }
-    }
-    
-    // Small delay for final caption capture, then cleanup
-    setTimeout(() => {
-        cleanupAll();
-    }, 100);
-});
-window.addEventListener('unload', cleanupAll);
-
-// Add cleanup function for navigation events
-const originalPushState = history.pushState;
-const originalReplaceState = history.replaceState;
-
-history.pushState = function() {
-    cleanupAll();
-    return originalPushState.apply(history, arguments);
-};
-
-history.replaceState = function() {
-    cleanupAll();
-    return originalReplaceState.apply(history, arguments);
-};
-
-// Listen for messages from the popup.js or service_worker.js
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    Logger.debug("Content script received message:", request);
-    
-    try {
-        switch (request.message) {
-            case 'return_transcript':
-                Logger.info("return_transcript request received:", { length: transcriptArray.length });
-                // Allow saving even when not actively capturing (e.g., after meeting ends)
-                // if (!capturing) {
-                //     const errorMsg = "Caption capturing is not active. Please make sure you're in a Teams meeting with captions enabled.";
-                //     Logger.error(errorMsg);
-                //     showUserNotification(errorMsg, 'error');
-                //     sendResponse({success: false, error: errorMsg});
-                //     return;
-                // }
-                
-                if (transcriptArray.length === 0) {
-                    const errorMsg = "No captions captured yet. Please make sure live captions are turned on in Teams.";
-                    console.error(errorMsg);
-                    showUserNotification(errorMsg, 'error');
-                    sendResponse({success: false, error: errorMsg});
-                    return;
-                }
-
-                try {
-                    let meetingTitle = document.title.replace("__Microsoft_Teams", '').replace(/[^a-z0-9 ]/gi, '');
+                    const meetingTitle = document.title.replace("__Microsoft_Teams", '').replace(/[^a-z0-9 ]/gi, '');
                     chrome.runtime.sendMessage({
                         message: "download_captions",
-                        transcriptArray: transcriptArray.map(({ID, ...rest}) => rest),
+                        transcriptArray: orderedForDownload.map(({ID, ...rest}) => rest),
                         meetingTitle: meetingTitle
                     });
-                    
-                    setTimeout(() => {
-                        if (confirm("Transcript saved! Would you like to clear the transcript data to start fresh for a new conversation?")) {
-                            resetTranscriptData();
-                        }
-                    }, 1000);
-                    
                     sendResponse({success: true});
-                } catch (error) {
-                    console.error('Error sending download message:', error);
-                    showUserNotification('Failed to initiate download: ' + error.message, 'error');
-                    sendResponse({success: false, error: error.message});
-                }
-                break;
+                    break;
 
-            case 'get_captions_for_viewing':
-                console.log("get_captions_for_viewing request received:", transcriptArray);
-                // Allow viewing even when not actively capturing (e.g., after meeting ends)
-                // if (!capturing) {
-                //     const errorMsg = "Caption capturing is not active. Please make sure you're in a Teams meeting with captions enabled.";
-                //     console.error(errorMsg);
-                //     showUserNotification(errorMsg, 'error');
-                //     sendResponse({success: false, error: errorMsg});
-                //     return;
-                // }
-                
-                if (transcriptArray.length === 0) {
-                    const errorMsg = "No captions captured yet. Please make sure live captions are turned on in Teams.";
-                    console.error(errorMsg);
-                    showUserNotification(errorMsg, 'error');
-                    sendResponse({success: false, error: errorMsg});
-                    return;
-                }
+                case 'get_captions_for_viewing':
+                    console.log("get_captions_for_viewing request received:", data.transcriptArray);
+                    
+                    console.log("Attempting to capture recent captions before viewing...");
+                    stateManager.triggerSilenceDetection('view-request');
+                    
+                    if (!data.capturing || data.transcriptArray.length === 0) {
+                        alert("Oops! No captions were captured. Please make sure captions are turned on.");
+                        sendResponse({success: false});
+                        return;
+                    }
 
-                try {
-                    const viewableTranscripts = transcriptArray.map(({ID, ...rest}) => rest);
+                    const orderedForViewing = captionProcessor.sortTranscriptsByScreenOrder();
+                    const viewableTranscripts = orderedForViewing.map(({ID, ...rest}) => rest);
                     
                     chrome.runtime.sendMessage({
                         message: "display_captions",
                         transcriptArray: viewableTranscripts
                     });
                     sendResponse({success: true});
-                } catch (error) {
-                    console.error('Error sending viewer message:', error);
-                    showUserNotification('Failed to open caption viewer: ' + error.message, 'error');
-                    sendResponse({success: false, error: error.message});
-                }
-                break;
+                    break;
 
-            case 'error_notification':
-                if (request.error) {
-                    showUserNotification(request.error, 'error');
-                }
-                sendResponse({success: true});
-                break;
+                case 'clear_transcript':
+                    console.log("clear_transcript request received");
+                    
+                    try {
+                        // Clear the main transcript array
+                        data.transcriptArray = [];
+                        
+                        // Clear processed captions tracking
+                        const memoryManager = window.CaptionSaver.MemoryManager;
+                        memoryManager.processedCaptions.clear();
+                        
+                        // Clear caption element tracking
+                        memoryManager.captionElementTracking.clear();
+                        
+                        // Reset transcript ID counter
+                        data.transcriptIdCounter = 0;
+                        
+                        // Reset timing states
+                        stateManager.lastCaptionTime = 0;
+                        stateManager.lastCaptionSnapshot = '';
+                        
+                        // Clear any active timers
+                        if (stateManager.silenceCheckTimer) {
+                            clearTimeout(stateManager.silenceCheckTimer);
+                            stateManager.silenceCheckTimer = null;
+                        }
+                        
+                        console.log("Transcript cleared successfully");
+                        sendResponse({success: true, message: "Transcript cleared"});
+                    } catch (error) {
+                        errorHandler.handleError(error, 'clear-transcript');
+                        sendResponse({success: false, error: error.message});
+                    }
+                    break;
 
-            case 'reset_transcript':
-                resetTranscriptData();
-                showUserNotification('Transcript data cleared. Starting fresh!', 'success');
-                sendResponse({success: true});
-                break;
-
-            case 'restore_removed':
-                // Hidden feature: restore recently removed entries if needed
-                const restored = restoreRecentlyRemoved(request.count || 1);
-                console.log('Restored entries:', restored);
-                sendResponse({success: true, restored: restored.length});
-                break;
-
-            default:
-                console.log('Unknown message type:', request.message);
-                sendResponse({success: false, error: 'Unknown message type'});
-                break;
+                default:
+                    const unknownError = errorHandler.createOperationalError(`Unknown message type: ${request.message}`, 'message-handler');
+                    sendResponse({success: false, error: unknownError.message});
+                    break;
+            }
+        } catch (error) {
+            errorHandler.handleError(error, 'message-handler');
+            sendResponse({success: false, error: 'Internal error processing message'});
         }
-    } catch (error) {
-        console.error('Error handling message:', error);
-        showUserNotification('Internal error: ' + error.message, 'error');
-        sendResponse({success: false, error: error.message});
-    }
-});
+        
+        return true;
+    },
 
-console.log("🚀 Conservative whitelist-based caption content_script.js is running");
+    // Clear transcript data (public API for testing/manual use)
+    clearTranscript() {
+        console.log("Clearing transcript via public API...");
+        
+        try {
+            const data = window.CaptionSaver.Data;
+            const memoryManager = window.CaptionSaver.MemoryManager;
+            const stateManager = window.CaptionSaver.StateManager;
+            
+            // Clear the main transcript array
+            data.transcriptArray = [];
+            
+            // Clear processed captions tracking
+            memoryManager.processedCaptions.clear();
+            
+            // Clear caption element tracking
+            memoryManager.captionElementTracking.clear();
+            
+            // Reset transcript ID counter
+            data.transcriptIdCounter = 0;
+            
+            // Reset timing states
+            stateManager.lastCaptionTime = 0;
+            stateManager.lastCaptionSnapshot = '';
+            
+            // Clear any active timers
+            if (stateManager.silenceCheckTimer) {
+                clearTimeout(stateManager.silenceCheckTimer);
+                stateManager.silenceCheckTimer = null;
+            }
+            
+            console.log("Transcript cleared successfully via public API");
+            return true;
+        } catch (error) {
+            console.error("Error clearing transcript via public API:", error);
+            return false;
+        }
+    },
+
+    // Initialize the entire system
+    initialize() {
+        console.log("Starting modular transcription system...");
+        
+        // Initialize periodic checks
+        this.initializePeriodicChecks();
+        
+        // Start transcription
+        const startResult = this.startTranscription();
+        console.log("startTranscription returned:", startResult);
+        
+        // Manual silence check for testing
+        setTimeout(() => {
+            console.log("MANUAL SILENCE CHECK - using centralized control");
+            window.CaptionSaver.StateManager.triggerSilenceDetection('manual-test-check');
+        }, 10000);
+        
+        // Set up message listener
+        chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+            return this.handleMessage(request, sender, sendResponse);
+        });
+        
+        console.log("Modular content_script.js is running");
+    }
+};
+
+// ========================================================================
+// INITIALIZE SYSTEM
+// ========================================================================
+window.CaptionSaver.Controller.initialize();

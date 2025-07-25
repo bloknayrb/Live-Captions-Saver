@@ -1,76 +1,78 @@
 document.addEventListener('DOMContentLoaded', function () {
     // Code inside this block will execute after the extension is fully loaded
-    console.log('popup.js loaded!');   
+    console.log('popup.js loaded!');
+    
+    // Centralized error handling for popup
+    function handlePopupError(error, context) {
+        console.error(`[Popup Error - ${context}]:`, error);
+        // Could show user-friendly error message
+        alert(`Error: ${error.message || 'Something went wrong'}`);
+    }
+    
+    // Safe message sending with error handling
+    function sendMessageSafely(message, callback) {
+        try {
+            chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+                if (chrome.runtime.lastError) {
+                    handlePopupError(new Error(chrome.runtime.lastError.message), 'tab-query');
+                    return;
+                }
+                
+                if (!tabs || tabs.length === 0) {
+                    handlePopupError(new Error('No active tab found'), 'tab-query');
+                    return;
+                }
+                
+                chrome.tabs.sendMessage(tabs[0].id, message, function(response) {
+                    if (chrome.runtime.lastError) {
+                        handlePopupError(new Error(chrome.runtime.lastError.message), 'message-send');
+                        return;
+                    }
+                    
+                    if (callback) {
+                        callback(response);
+                    }
+                });
+            });
+        } catch (error) {
+            handlePopupError(error, 'message-send');
+        }
+    }
 
     document.getElementById('saveButton').addEventListener('click', function () {
         console.log('save_captions clicked!');
-        
-        // Get active tab and send message with retry logic
-        chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-            if (!tabs || tabs.length === 0) {
-                console.warn('No active tab found');
-                return;
-            }
-            
-            chrome.tabs.sendMessage(tabs[0].id, {message: "return_transcript"}, function(response) {
-                if (chrome.runtime.lastError) {
-                    // Only log if it's not a common timing issue
-                    if (!chrome.runtime.lastError.message.includes('receiving end does not exist')) {
-                        console.warn('Save message communication issue:', chrome.runtime.lastError.message);
-                    }
-                } else if (response && !response.success) {
-                    console.warn('Save operation failed:', response.error);
-                }
-            });
-        });
+        sendMessageSafely({message: "return_transcript"});
     });
 
     document.getElementById('viewButton').addEventListener('click', function () {
         console.log('view_captions clicked!');
-        
-        // Get active tab and send message with retry logic
-        chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-            if (!tabs || tabs.length === 0) {
-                console.warn('No active tab found');
-                return;
-            }
-            
-            chrome.tabs.sendMessage(tabs[0].id, {message: "get_captions_for_viewing"}, function(response) {
-                if (chrome.runtime.lastError) {
-                    // Only log if it's not a common timing issue
-                    if (!chrome.runtime.lastError.message.includes('receiving end does not exist')) {
-                        console.warn('View message communication issue:', chrome.runtime.lastError.message);
-                    }
-                } else if (response && !response.success) {
-                    console.warn('View operation failed:', response.error);
-                }
-            });
-        });
+        sendMessageSafely({message: "get_captions_for_viewing"});
     });
 
-    document.getElementById('resetButton').addEventListener('click', function () {
-        console.log('reset_transcript clicked!');
+    document.getElementById('clearButton').addEventListener('click', function () {
+        console.log('clear_transcript clicked!');
         
-        // Confirm before resetting
-        if (confirm('Are you sure you want to clear all captured transcript data? This cannot be undone.')) {
-            // Get active tab and send message with retry logic
-            chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-                if (!tabs || tabs.length === 0) {
-                    console.warn('No active tab found');
-                    return;
-                }
+        sendMessageSafely({message: "clear_transcript"}, function(response) {
+            if (response && response.success) {
+                console.log('Transcript cleared successfully');
+                // Show a brief confirmation
+                const button = document.getElementById('clearButton');
+                const originalText = button.textContent;
+                const originalColor = button.style.backgroundColor;
                 
-                chrome.tabs.sendMessage(tabs[0].id, {message: "reset_transcript"}, function(response) {
-                    if (chrome.runtime.lastError) {
-                        // Only log if it's not a common timing issue
-                        if (!chrome.runtime.lastError.message.includes('receiving end does not exist')) {
-                            console.warn('Reset message communication issue:', chrome.runtime.lastError.message);
-                        }
-                    } else if (response && response.success) {
-                        console.log('Transcript reset successfully');
-                    }
-                });
-            });
-        }
+                button.textContent = 'Cleared!';
+                button.style.backgroundColor = '#28a745';
+                button.disabled = true;
+                
+                setTimeout(() => {
+                    button.textContent = originalText;
+                    button.style.backgroundColor = originalColor || '#dc3545';
+                    button.disabled = false;
+                }, 1500);
+            } else {
+                const errorMsg = response?.error || 'Unknown error occurred';
+                handlePopupError(new Error(errorMsg), 'clear-transcript');
+            }
+        });
     });
 });

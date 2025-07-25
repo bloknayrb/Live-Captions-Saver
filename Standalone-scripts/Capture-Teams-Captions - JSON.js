@@ -102,7 +102,7 @@ function downloadJSON() {
 
     // Use the page's title as part of the file name, replacing "__Microsoft_Teams" with nothing
     // and removing any non-alphanumeric characters except spaces
-    let title = document.title.replace("__Microsoft_Teams", '').replace(/[^a-z0-9 ]/gi, '');
+    const title = document.title.replace("__Microsoft_Teams", '').replace(/[^a-z0-9 ]/gi, '');
     const fileName = "transcript - " + title.trim() + ".json";
 
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(prettyTranscripts);

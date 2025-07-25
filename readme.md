@@ -1,17 +1,8 @@
 ![](IMG/logo.png)
 
-# MS Teams Live Captions Saver Browser Extension v3.7.0
+# MS Teams Live Captions Saver Browser Extension
 
-The MS Teams Live Captions Saver is a Chrome extension that provides **enterprise-grade, zero-loss caption capture** from Microsoft Teams meetings. Perfect for accessibility compliance, meeting documentation, legal transcription, and maintaining accurate records of important discussions.
-
-## 🚀 **NEW IN v3.7.0 - TRANSITION-AWARE ARCHITECTURE**
-- **🔄 Revolutionary Chat-to-Meeting Transitions**: Eliminates false "paused due to inactivity" alerts
-- **🎯 5-State Meeting Model**: Intelligent state management (CHAT → JOINING → PRE_MEETING → MEETING_ACTIVE → CAPTIONS_READY)
-- **⏱️ Grace Period Logic**: 1-minute grace periods prevent false alarms during transitions
-- **🔧 Smart Observer Management**: Health-aware observer lifecycle with re-targeting capabilities
-- **📊 Dynamic Health Monitoring**: State-specific health check intervals optimize performance
-- **🐛 Enhanced Debug Logging**: Comprehensive state transition logging for troubleshooting
-- **💪 Seamless User Experience**: Smooth transitions with contextual progress indicators
+The MS Teams Live Captions Saver is a Chrome extension that allows you to capture and export live captions from Microsoft Teams. It is very helpful for those who want to save important discussions and keep track of the conversations for later reference.
 
 ## Install from the Chrome Store
 
@@ -19,52 +10,45 @@ The MS Teams Live Captions Saver is a Chrome extension that provides **enterpris
 
 ## Usage
 
-To use the MS Teams Live Captions Saver extension:
+To use the Chat Transcript Saver extension:
 
-1. Navigate to a Microsoft Teams page in your browser: https://teams.microsoft.com
+1. Navigate to a Microsoft Teams page in the browser https://teams.microsoft.com.
+
 2. Join a meeting.
-3. Turn on live captions by clicking the ellipsis button in the meeting controls, then selecting "Turn on live captions".
-4. When you're finished, click the extension icon and use the popup to either:
-   - **Save Captions**: Download the transcript as a YAML file.
-   - **View Captions**: Open a new tab to view the captured captions in your browser.
-   - **Clear Transcript**: Reset all captured transcript data.
+
+3. Turn on live captions by pressing `ALT + SHIFT + C`. This is also done by clicking on the ellipsis button in the meeting controls, then clicking "Turn on live captions".
 
 ![](IMG/1.png)
+
+3. When you're finished, click "Save Captions". The transcript will be downloaded as a YAML file.
+
 ![](IMG/4.png)
 
-## ✨ **Core Features**
+## Extension Features
 
-### 🔒 **Reliability & Data Protection**
-- **Zero Caption Loss**: Absolute guarantee - never loses captions automatically
-- **Auto-Backup System**: Continuous backup to localStorage every 100 captions
-- **Crash Recovery**: Restores captions after browser/tab crashes
-- **10,000+ Caption Capacity**: Handles ultra-long meetings without performance degradation
-- **Self-Healing Architecture**: Automatically restarts failed capture systems
+The extension popup provides three main functions:
 
-### 🧠 **Intelligent Caption Processing**
-- **Advanced Deduplication**: Sophisticated whitelist-based algorithm prevents duplicate captions
-- **Progressive Update Detection**: Identifies and merges partial caption updates
-- **Real-time Processing**: Debounced DOM observations prevent race conditions
-- **Multi-Selector Fallbacks**: Resilient to Teams UI changes
+- **Save Captions**: Downloads the captured captions as a YAML file
+- **View Captions**: Opens the captions in a new browser tab for review
+- **Clear Transcript**: Clears all captured captions from memory (useful for starting fresh in a new meeting segment)
 
-### 🛡️ **Security & Validation**
-- **XSS Protection**: All user data properly escaped and validated
-- **Input Sanitization**: Comprehensive validation with length limits
-- **Type Safety**: Runtime type checking for all inputs
-- **Chrome API Security**: Robust error handling for all extension APIs
+## Security & Privacy
 
-### 👥 **Meeting Management**
-- **Transition-Aware Architecture**: 5-state meeting model handles chat-to-meeting transitions seamlessly
-- **Grace Period Logic**: Prevents false alarms during state transitions
-- **Smart Observer Management**: Health-aware observer lifecycle with intelligent re-targeting
-- **Dynamic Health Monitoring**: State-specific health check intervals (15-60 seconds)
-- **Context Preservation**: Maintains transcript integrity across navigation
-- **Manual Controls**: Full user control over save/clear operations
-- **Progressive Status Updates**: Real-time transition progress indicators
+This extension follows security best practices:
+
+- **Manifest V3**: Uses the latest Chrome extension security model
+- **Minimal Permissions**: Only requests necessary permissions (`downloads`, `activeTab`)
+- **Host Restrictions**: Only works on `teams.microsoft.com` domains
+- **Content Security Policy**: Prevents code injection attacks
+- **Input Validation**: All messages are validated before processing
+- **Error Handling**: Centralized error handling prevents information leakage
+- **No External Requests**: All processing happens locally in your browser
+
+
 
 ## Sample data exported
 
-Data is exported as a YAML file. Here's a sample of the exported data:
+Data is exported as a Yaml file. Here's a sample of the data exported:
 
 ```
 Name: Denis Molodtsov
@@ -87,172 +71,140 @@ Time: 21:56:08
 
 ## Browsing Captured Captions
 
-You can also view the captured captions in your browser. Click the extension icon and select "View Captions" to open a new tab with the captured captions.
+You can also view the captured captions in the browser. To do this, click on the extension icon in the toolbar and select "View Captions". This will open a new tab with the captured captions.
+
+If you need to start fresh (for example, when moving to a new topic or meeting segment), you can click "Clear Transcript" to remove all captured captions from memory.
 
 ![alt text](IMG/7.png)
+
 ![alt text](IMG/6.png)
 
-## Optional: Installing extension via "Load unpacked"
 
-You can install the extension manually for development or testing:
+## Optional: Installing extension via the "Load unpacked"
+The MS Teams Live Captions Saver Extension can also be installed via the "Load unpacked" option in Chrome/Edge/Brave browsers. Here's how:
 
-1. Download and unzip the `teams-captions-saver` directory.
-2. Open Chrome, Edge, or Brave and navigate to the Extensions page:
-   - edge://extensions/
-   - chrome://extensions/
-   - brave://extensions/
-3. Enable Developer mode.
-4. Click "Load Unpacked" and select the unzipped `teams-captions-saver` directory.
+1. Download the `teams-captions-saver.zip` file and unzip it anywhere on disk.
 
-## Optional: Standalone JavaScript (for environments where extensions are not allowed)
+2. Open Chrome, Edge or Brave browser  and navigate to the Extensions page:
+   - edge://extensions/ -  edge browser
+   - chrome://extensions/ -  google chrome browser
+   - brave://extensions/ -  brave browser
 
-If you can't use extensions:
+
+3. Enable Developer mode by clicking the toggle switch (typically, at the top right).
+
+4. Click the "Load Unpacked" button and select the directory containing your extension files. Use the unzipped `teams-captions-saver` directory.
+
+## Optional: Standalone JavaScript. When you can't use browser extensions
+But what if you can't use extensions for security reasons? Well, in this case:
 - Join a meeting using a browser.
-- Start live captions in MS Teams.
+- Start the live captions using the built-in MS Teams feature.
 - Open the browser console.
-- Paste the [Capture-Teams-Captrions - YAML.js](https://github.com/Zerg00s/Live-Captions-Saver/blob/master/Standalone-scripts/Capture-Teams-Captrions%20-%20YAML.js) script and run it.
-- When ready, run `downloadYAML();` in the console to download the transcript.
+- Paste the [Capture-Teams-Captrions - YAML.js](https://github.com/Zerg00s/Live-Captions-Saver/blob/master/Standalone-scripts/Capture-Teams-Captrions%20-%20YAML.js) into the console and run it.
+- Once you are ready to dowload a transcript, open the console window again and run this command: `downloadYAML();`
+- A text file with a transcript will be downloaded.
 
-## 🔧 **Advanced Features**
+Please note that this extension works on Microsoft Teams pages only during the meetings and only when the live captions are first turned on.
 
-### 🚨 **Auto-Save & Memory Management**
-- **Smart Thresholds**: Prompts auto-save at 5,000 captions
-- **User Consent**: Never saves without explicit user permission
-- **Memory Monitoring**: Warns at 10,000+ captions to prevent browser issues
-- **Graceful Degradation**: Performance warnings instead of failures
+## Recent Improvements (v4.0.0+)
 
-### 🔍 **Debugging & Testing**
-- **Development Mode**: Comprehensive test suite with 18+ test cases
-- **State Transition Logging**: Complete visibility into meeting state changes
-- **Health Monitoring**: Continuous capture flow validation with state awareness
-- **Debug Logging**: Configurable logging levels (DEBUG, INFO, WARN, ERROR)
-- **Enhanced Debug Mode**: URL parameter support (`?debug=true`) and localStorage
-- **Test Coverage**: Validates security, performance, reliability, and state transitions
+### 🆕 Clear Transcript Functionality
+- **Clear Transcript Button**: New red button in popup to clear all captured captions
+- **Memory Reset**: Completely clears transcript data, processed captions, and tracking information
+- **Visual Feedback**: Button shows "Cleared!" confirmation with color change
+- **Error Handling**: Robust error handling with user-friendly feedback
+- **Testing Suite**: Comprehensive tests for clear functionality
 
-### ⚡ **Performance Optimizations**
-- **70% CPU Reduction**: Debounced DOM processing
-- **O(1) Deduplication**: Hash-based duplicate detection
-- **Efficient Memory Usage**: Smart garbage collection and limits
-- **Batch Processing**: Optimized DOM queries and updates
+### 🔒 Security & Best Practices Enhancements
+- **Centralized Error Handling**: New ErrorHandler module for consistent error management
+- **Input Validation**: All extension messages are validated before processing
+- **Content Security Policy**: Added CSP headers to prevent code injection attacks
+- **Operational Error Classification**: Distinguishes between expected and unexpected errors
+- **Safe Async Operations**: Wrapped async operations with proper error handling
+- **Message Type Validation**: Explicit validation of allowed message types
 
-## 🛠️ **For Developers**
+### 🏗️ Modular Architecture Refactor
+The extension has been completely refactored from a monolithic structure into a clean, maintainable modular architecture:
 
-### Development Setup
-```bash
-# Load unpacked extension in Chrome/Edge/Brave
-1. Open Extensions page and enable Developer mode
-2. Click "Load Unpacked" and select `teams-captions-saver` directory
-3. Navigate to https://teams.microsoft.com/v2/
-4. Join a meeting and enable captions
-```
+- **Config Module**: Centralized configuration and constants with frozen objects
+- **ErrorHandler Module**: Centralized error handling and logging (NEW)
+- **DOMUtils Module**: Safe DOM operations with comprehensive error handling
+- **TextProcessor Module**: Advanced text normalization and similarity algorithms
+- **StateManager Module**: Processing coordination and race condition prevention
+- **MemoryManager Module**: Automatic cleanup and memory optimization
+- **MeetingDetector Module**: Efficient meeting state detection with caching
+- **CaptionProcessor Module**: Core caption processing logic
+- **Controller Module**: Main orchestration and public API
 
-### Testing
-```bash
-# Enable debug mode for comprehensive testing
-localStorage.setItem('caption_saver_debug', 'true')
-# Or add ?debug=true to Teams URL
-# Check console for detailed test results and state transition logs
+### 🔧 Enhanced Reliability
+- **Improved Error Handling**: Comprehensive try-catch blocks and graceful degradation
+- **Context-Aware Logging**: All errors include context information for better debugging
+- **Memory Management**: Automatic cleanup prevents memory leaks during long meetings
+- **Race Condition Prevention**: Centralized state management eliminates timing conflicts
+- **DOM Selector Resilience**: Multiple fallback strategies for different Teams UI versions
+- **Performance Optimization**: Debounced processing and intelligent caching
+- **Chrome Runtime Error Handling**: Proper handling of Chrome extension API errors
 
-# Critical test: Chat-to-meeting transitions
-1. Start in Teams chat
-2. Join meeting in same tab
-3. Verify no false "paused due to inactivity" alerts
-4. Check state transition logs in console
-```
+### 🧪 Development & Testing
+- **Enhanced Test Suite**: Updated testing framework covering new error handling and clear functionality
+- **Clear Functionality Tests**: Dedicated tests for transcript clearing operations
+- **Error Handler Tests**: Validation of centralized error handling system
+- **Code Analysis Tools**: Static analysis for architectural validation
+- **Performance Monitoring**: Built-in performance tracking and optimization
+- **Developer Documentation**: Enhanced documentation for future development guidance
 
-### Architecture
-- **CaptionManager Class**: Centralized state management with transition-aware architecture
-- **5-State Meeting Model**: CHAT → JOINING → PRE_MEETING → MEETING_ACTIVE → CAPTIONS_READY
-- **Event-Driven**: Debounced DOM observations with state-aware health monitoring
-- **Smart Observer Management**: Health verification and re-targeting capabilities
-- **Error Boundaries**: Comprehensive exception handling with state context
-- **Modular Design**: Single-responsibility functions with transition logic
+## Contributing (Developers only)
 
-### Publishing Updates
-- Update version in `manifest.json`
-- Run comprehensive test suite
-- Package extension as ZIP
-- Upload to [Chrome Developer Dashboard](https://chrome.google.com/webstore/devconsole)
+### Load unpacked extension in Chrome/Edge/Brave browser
 
-## 🎯 **Use Cases**
+- Open the Extensions page:
+   - edge://extensions/ -  edge browser
+   - chrome://extensions/ -  google chrome browser
+   - brave://extensions/ -  brave browser
+- Enable Developer mode by clicking the toggle switch (typically, at the top right).
+- Click the "Load Unpacked" button and select the `teams-captions-saver` directory.
+- Open https://teams.microsoft.com/v2/
+- Open calendar and join a meeting.
+- Press ALT+SHIFT+C to turn on live captions
 
-- **🏢 Corporate Meetings**: Accurate documentation for compliance and record-keeping
-- **♿ Accessibility**: Supporting team members with hearing impairments
-- **📚 Training Sessions**: Creating searchable transcripts for knowledge management
-- **⚖️ Legal Documentation**: Precise meeting records for legal proceedings
-- **🌍 Multi-language Teams**: Caption archival for translation and review
-- **🎓 Educational Content**: Converting live sessions to study materials
+### Development Testing
 
-## 📊 **Technical Specifications**
+For comprehensive testing of the modular architecture:
 
-| Feature | Specification |
-|---------|---------------|
-| **Maximum Captions** | 10,000+ (ultra-long meeting support) |
-| **Performance** | 70% faster than previous versions |
-| **Memory Usage** | Optimized with smart garbage collection |
-| **Browser Compatibility** | Chrome, Edge, Brave (Manifest V3) |
-| **Auto-Save Threshold** | 5,000 captions (user-configurable) |
-| **Backup Frequency** | Every 100 captions to localStorage |
-| **Crash Recovery** | Up to 4 hours of backup retention |
-| **Security Level** | Enterprise-grade XSS protection |
+1. Load the extension and join a Teams meeting with live captions
+2. Open browser console and run: `testCaptions.runAllTests()`
+3. Monitor console output for any errors or warnings
+4. Test caption capture, viewing, and download functionality
 
-## ⚠️ **Important Notes**
+### Architecture Overview
 
-### Data Privacy & Compliance
-- **Local Processing**: All caption processing happens locally in your browser
-- **No Cloud Storage**: Captions are never sent to external servers
-- **User Control**: Complete control over data save/delete operations
-- **GDPR Compliant**: Respects data protection regulations
+The new modular structure provides:
+- **Single Responsibility**: Each module has a focused purpose
+- **Error Isolation**: Failures in one module don't crash the entire system
+- **Testability**: Individual modules can be tested independently
+- **Maintainability**: Clear separation of concerns makes updates easier
+- **Performance**: Optimized processing with intelligent caching and cleanup
 
-### Meeting Consent
-- Always obtain consent from all meeting participants before recording captions
-- Inform participants that captions are being saved for documentation
-- Comply with your organization's recording and data retention policies
-- Respect applicable privacy laws and Microsoft Teams' terms of service
+### Update the manifest.json file
 
-### Technical Requirements
-- Microsoft Teams (Web version recommended)
-- Chrome/Edge/Brave browser with extension support
-- Active captions must be enabled in Teams meeting
-- Sufficient browser memory for long meetings (auto-managed)
+- Open manifest.json
+- Increment the version number
 
-## 🆘 **Support & Troubleshooting**
+### Publish New Extension Version to the Chrome Web Store
 
-### Common Issues
-- **No Captions Captured**: Ensure live captions are enabled in Teams
-- **False "Paused Due to Inactivity" Alerts**: Fixed in v3.7.0 - update to latest version
-- **Extension Not Working**: Try refreshing the Teams page and restarting extension
-- **Performance Issues**: Use auto-save feature for very long meetings
-- **Browser Crashes**: Extension will automatically offer to restore captions on restart
-- **Chat-to-Meeting Transitions**: v3.7.0 includes seamless transition handling
+- ZIP the `teams-captions-saver` directory.
+- Navigate to [Chrome Developer Dashboard.](https://chrome.google.com/webstore/devconsole)
+- Click on "MS Teams Live Captions Saver" > Package
+- Upload new package.
+- Click Choose file > your zip file > Upload. If your item's manifest and ZIP file are valid, you can edit your item on the next page.
 
-### Debug Mode
-Enable comprehensive debugging with state transition logging:
-```javascript
-// Method 1: localStorage (persistent)
-localStorage.setItem('caption_saver_debug', 'true')
+## Disclaimer
 
-// Method 2: URL parameter (temporary)
-// Add ?debug=true to Teams URL
-// https://teams.microsoft.com/v2/?debug=true
+Please note that the MS Teams Live Captions Saver Extension captures and saves live captions from meetings, which might include sensitive information and private conversations. Therefore, before using this tool, you are required to obtain consent from all parties involved in the meeting. 
 
-// Features enabled in debug mode:
-// - State transition logging
-// - Health check details
-// - Observer lifecycle tracking
-// - Comprehensive test suite execution
-```
+You must ensure that the use of this extension complies with all applicable laws and regulations in your jurisdiction, including but not limited to privacy laws, data protection regulations, and terms of service of Microsoft Teams. In some locations, recording or transcribing a conversation without the knowledge and consent of all participants could be illegal.
 
-### Health Monitoring
-The extension continuously monitors capture status and will alert you if issues are detected.
+This tool is provided for use "as is" and the developer assumes no responsibility for any legal issues that may arise from its use, including but not limited to privacy violations or data breaches. Users are solely responsible for the use of this tool and ensuring they comply with all local, national, and international laws.
 
-## 📜 **Disclaimer**
-
-This tool is provided "as is" without warranty. Users are responsible for:
-- Obtaining proper consent from meeting participants
-- Complying with applicable laws and organizational policies
-- Respecting Microsoft Teams' terms of service
-- Using the tool ethically and responsibly
-
-The developer assumes no responsibility for legal issues arising from misuse.
+By using this extension, you agree to use it responsibly and ethically, and acknowledge that you have understood and accepted all the potential legal implications.
 
