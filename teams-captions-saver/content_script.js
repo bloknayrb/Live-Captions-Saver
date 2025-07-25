@@ -1046,97 +1046,95 @@ window.CaptionSaver.Controller = {
             const stateManager = window.CaptionSaver.StateManager;
             const captionProcessor = window.CaptionSaver.CaptionProcessor;
             const data = window.CaptionSaver.Data;
-        
-        switch (request.message) {
-            case 'return_transcript':
-                console.log("return_transcript request received:", data.transcriptArray);
-                
-                console.log("Attempting to capture recent captions before download...");
-                stateManager.triggerSilenceDetection('download-request');
-                
-                if (!data.capturing || data.transcriptArray.length === 0) {
-                    alert("Oops! No captions were captured. Please make sure captions are turned on.");
-                    sendResponse({success: false});
-                    return;
-                }
-
-                const orderedForDownload = captionProcessor.sortTranscriptsByScreenOrder();
-                
-                const meetingTitle = document.title.replace("__Microsoft_Teams", '').replace(/[^a-z0-9 ]/gi, '');
-                chrome.runtime.sendMessage({
-                    message: "download_captions",
-                    transcriptArray: orderedForDownload.map(({ID, ...rest}) => rest),
-                    meetingTitle: meetingTitle
-                });
-                sendResponse({success: true});
-                break;
-
-            case 'get_captions_for_viewing':
-                console.log("get_captions_for_viewing request received:", data.transcriptArray);
-                
-                console.log("Attempting to capture recent captions before viewing...");
-                stateManager.triggerSilenceDetection('view-request');
-                
-                if (!data.capturing || data.transcriptArray.length === 0) {
-                    alert("Oops! No captions were captured. Please make sure captions are turned on.");
-                    sendResponse({success: false});
-                    return;
-                }
-
-                const orderedForViewing = captionProcessor.sortTranscriptsByScreenOrder();
-                const viewableTranscripts = orderedForViewing.map(({ID, ...rest}) => rest);
-                
-                chrome.runtime.sendMessage({
-                    message: "display_captions",
-                    transcriptArray: viewableTranscripts
-                });
-                sendResponse({success: true});
-                break;
-
-            case 'clear_transcript':
-                console.log("clear_transcript request received");
-                
-                try {
-                    // Clear the main transcript array
-                    data.transcriptArray = [];
+            switch (request.message) {
+                case 'return_transcript':
+                    console.log("return_transcript request received:", data.transcriptArray);
                     
-                    // Clear processed captions tracking
-                    const memoryManager = window.CaptionSaver.MemoryManager;
-                    memoryManager.processedCaptions.clear();
+                    console.log("Attempting to capture recent captions before download...");
+                    stateManager.triggerSilenceDetection('download-request');
                     
-                    // Clear caption element tracking
-                    memoryManager.captionElementTracking.clear();
-                    
-                    // Reset transcript ID counter
-                    data.transcriptIdCounter = 0;
-                    
-                    // Reset timing states
-                    stateManager.lastCaptionTime = 0;
-                    stateManager.lastCaptionSnapshot = '';
-                    
-                    // Clear any active timers
-                    if (stateManager.silenceCheckTimer) {
-                        clearTimeout(stateManager.silenceCheckTimer);
-                        stateManager.silenceCheckTimer = null;
+                    if (!data.capturing || data.transcriptArray.length === 0) {
+                        alert("Oops! No captions were captured. Please make sure captions are turned on.");
+                        sendResponse({success: false});
+                        return;
                     }
-                    
-                    console.log("Transcript cleared successfully");
-                    sendResponse({success: true, message: "Transcript cleared"});
-                } catch (error) {
-                    errorHandler.handleError(error, 'clear-transcript');
-                    sendResponse({success: false, error: error.message});
-                }
-                break;
 
-            default:
-                const unknownError = errorHandler.createOperationalError(`Unknown message type: ${request.message}`, 'message-handler');
-                sendResponse({success: false, error: unknownError.message});
-                break;
-        
+                    const orderedForDownload = captionProcessor.sortTranscriptsByScreenOrder();
+                    
+                    const meetingTitle = document.title.replace("__Microsoft_Teams", '').replace(/[^a-z0-9 ]/gi, '');
+                    chrome.runtime.sendMessage({
+                        message: "download_captions",
+                        transcriptArray: orderedForDownload.map(({ID, ...rest}) => rest),
+                        meetingTitle: meetingTitle
+                    });
+                    sendResponse({success: true});
+                    break;
+
+                case 'get_captions_for_viewing':
+                    console.log("get_captions_for_viewing request received:", data.transcriptArray);
+                    
+                    console.log("Attempting to capture recent captions before viewing...");
+                    stateManager.triggerSilenceDetection('view-request');
+                    
+                    if (!data.capturing || data.transcriptArray.length === 0) {
+                        alert("Oops! No captions were captured. Please make sure captions are turned on.");
+                        sendResponse({success: false});
+                        return;
+                    }
+
+                    const orderedForViewing = captionProcessor.sortTranscriptsByScreenOrder();
+                    const viewableTranscripts = orderedForViewing.map(({ID, ...rest}) => rest);
+                    
+                    chrome.runtime.sendMessage({
+                        message: "display_captions",
+                        transcriptArray: viewableTranscripts
+                    });
+                    sendResponse({success: true});
+                    break;
+
+                case 'clear_transcript':
+                    console.log("clear_transcript request received");
+                    
+                    try {
+                        // Clear the main transcript array
+                        data.transcriptArray = [];
+                        
+                        // Clear processed captions tracking
+                        const memoryManager = window.CaptionSaver.MemoryManager;
+                        memoryManager.processedCaptions.clear();
+                        
+                        // Clear caption element tracking
+                        memoryManager.captionElementTracking.clear();
+                        
+                        // Reset transcript ID counter
+                        data.transcriptIdCounter = 0;
+                        
+                        // Reset timing states
+                        stateManager.lastCaptionTime = 0;
+                        stateManager.lastCaptionSnapshot = '';
+                        
+                        // Clear any active timers
+                        if (stateManager.silenceCheckTimer) {
+                            clearTimeout(stateManager.silenceCheckTimer);
+                            stateManager.silenceCheckTimer = null;
+                        }
+                        
+                        console.log("Transcript cleared successfully");
+                        sendResponse({success: true, message: "Transcript cleared"});
+                    } catch (error) {
+                        errorHandler.handleError(error, 'clear-transcript');
+                        sendResponse({success: false, error: error.message});
+                    }
+                    break;
+
+                default:
+                    const unknownError = errorHandler.createOperationalError(`Unknown message type: ${request.message}`, 'message-handler');
+                    sendResponse({success: false, error: unknownError.message});
+                    break;
+            }
         } catch (error) {
             errorHandler.handleError(error, 'message-handler');
             sendResponse({success: false, error: 'Internal error processing message'});
-        }
         }
         
         return true;
