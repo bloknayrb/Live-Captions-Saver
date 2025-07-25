@@ -9,6 +9,23 @@ window.CaptionSaver = window.CaptionSaver || {};
 // CONFIG MODULE - All constants and configuration
 // ========================================================================
 window.CaptionSaver.Config = {
+    // Message types for validation
+    VALID_MESSAGES: Object.freeze([
+        'return_transcript',
+        'get_captions_for_viewing', 
+        'clear_transcript'
+    ]),
+    
+    // Error contexts for better debugging
+    ERROR_CONTEXTS: Object.freeze({
+        MESSAGE_VALIDATION: 'message-validation',
+        MESSAGE_HANDLER: 'message-handler',
+        CLEAR_TRANSCRIPT: 'clear-transcript',
+        CAPTION_PROCESSING: 'caption-processing',
+        DOM_OPERATIONS: 'dom-operations',
+        MEMORY_MANAGEMENT: 'memory-management'
+    }),
+    
     SIMILARITY_THRESHOLDS: {
         UPDATE_DETECTION: 0.7,      // Minimum similarity to consider caption an update
         HIGH_SIMILARITY: 0.85,      // High similarity threshold for updates
@@ -495,6 +512,45 @@ window.CaptionSaver.MeetingDetector = {
 };
 
 // ========================================================================
+// ERROR HANDLER MODULE - Centralized error handling
+// ========================================================================
+window.CaptionSaver.ErrorHandler = {
+    // Centralized error logging and handling
+    handleError(error, context = 'unknown') {
+        const errorInfo = {
+            message: error.message || 'Unknown error',
+            stack: error.stack || 'No stack trace',
+            context: context,
+            timestamp: new Date().toISOString(),
+            isOperational: error.isOperational || false
+        };
+        
+        console.error(`[CaptionSaver Error - ${context}]:`, errorInfo);
+        
+        // Could be extended to send to monitoring service
+        return errorInfo;
+    },
+    
+    // Create operational errors
+    createOperationalError(message, context) {
+        const error = new Error(message);
+        error.isOperational = true;
+        error.context = context;
+        return error;
+    },
+    
+    // Wrap async operations with error handling
+    async safeAsync(asyncFn, context = 'async-operation') {
+        try {
+            return await asyncFn();
+        } catch (error) {
+            this.handleError(error, context);
+            throw error;
+        }
+    }
+};
+
+// ========================================================================
 // DATA MODULE - Global data storage
 // ========================================================================
 window.CaptionSaver.Data = {
@@ -963,13 +1019,33 @@ window.CaptionSaver.Controller = {
         return true;
     },
 
+    // Validate message structure
+    validateMessage(request) {
+        if (!request || typeof request !== 'object') {
+            return false;
+        }
+        
+        const validMessages = ['return_transcript', 'get_captions_for_viewing', 'clear_transcript'];
+        return validMessages.includes(request.message);
+    },
+
     // Handle extension messages
     handleMessage(request, sender, sendResponse) {
-        console.log("Content script received message:", request);
+        const errorHandler = window.CaptionSaver.ErrorHandler;
         
-        const stateManager = window.CaptionSaver.StateManager;
-        const captionProcessor = window.CaptionSaver.CaptionProcessor;
-        const data = window.CaptionSaver.Data;
+        try {
+            console.log("Content script received message:", request);
+            
+            // Validate message
+            if (!this.validateMessage(request)) {
+                const error = errorHandler.createOperationalError('Invalid message format', 'message-validation');
+                sendResponse({success: false, error: error.message});
+                return false;
+            }
+            
+            const stateManager = window.CaptionSaver.StateManager;
+            const captionProcessor = window.CaptionSaver.CaptionProcessor;
+            const data = window.CaptionSaver.Data;
         
         switch (request.message) {
             case 'return_transcript':
@@ -1017,12 +1093,92 @@ window.CaptionSaver.Controller = {
                 sendResponse({success: true});
                 break;
 
-            default:
-                sendResponse({success: false, error: "Unknown message"});
+            case 'clear_transcript':
+                console.log("clear_transcript request received");
+                
+                try {
+                    // Clear the main transcript array
+                    data.transcriptArray = [];
+                    
+                    // Clear processed captions tracking
+                    const memoryManager = window.CaptionSaver.MemoryManager;
+                    memoryManager.processedCaptions.clear();
+                    
+                    // Clear caption element tracking
+                    memoryManager.captionElementTracking.clear();
+                    
+                    // Reset transcript ID counter
+                    data.transcriptIdCounter = 0;
+                    
+                    // Reset timing states
+                    stateManager.lastCaptionTime = 0;
+                    stateManager.lastCaptionSnapshot = '';
+                    
+                    // Clear any active timers
+                    if (stateManager.silenceCheckTimer) {
+                        clearTimeout(stateManager.silenceCheckTimer);
+                        stateManager.silenceCheckTimer = null;
+                    }
+                    
+                    console.log("Transcript cleared successfully");
+                    sendResponse({success: true, message: "Transcript cleared"});
+                } catch (error) {
+                    errorHandler.handleError(error, 'clear-transcript');
+                    sendResponse({success: false, error: error.message});
+                }
                 break;
+
+            default:
+                const unknownError = errorHandler.createOperationalError(`Unknown message type: ${request.message}`, 'message-handler');
+                sendResponse({success: false, error: unknownError.message});
+                break;
+        
+        } catch (error) {
+            errorHandler.handleError(error, 'message-handler');
+            sendResponse({success: false, error: 'Internal error processing message'});
+        }
         }
         
         return true;
+    },
+
+    // Clear transcript data (public API for testing/manual use)
+    clearTranscript() {
+        console.log("Clearing transcript via public API...");
+        
+        try {
+            const data = window.CaptionSaver.Data;
+            const memoryManager = window.CaptionSaver.MemoryManager;
+            const stateManager = window.CaptionSaver.StateManager;
+            
+            // Clear the main transcript array
+            data.transcriptArray = [];
+            
+            // Clear processed captions tracking
+            memoryManager.processedCaptions.clear();
+            
+            // Clear caption element tracking
+            memoryManager.captionElementTracking.clear();
+            
+            // Reset transcript ID counter
+            data.transcriptIdCounter = 0;
+            
+            // Reset timing states
+            stateManager.lastCaptionTime = 0;
+            stateManager.lastCaptionSnapshot = '';
+            
+            // Clear any active timers
+            if (stateManager.silenceCheckTimer) {
+                clearTimeout(stateManager.silenceCheckTimer);
+                stateManager.silenceCheckTimer = null;
+            }
+            
+            console.log("Transcript cleared successfully via public API");
+            return true;
+        } catch (error) {
+            console.error("Error clearing transcript via public API:", error);
+            return false;
+        }
     },
 
     // Initialize the entire system

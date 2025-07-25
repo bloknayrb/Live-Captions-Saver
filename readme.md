@@ -24,6 +24,26 @@ To use the Chat Transcript Saver extension:
 
 ![](IMG/4.png)
 
+## Extension Features
+
+The extension popup provides three main functions:
+
+- **Save Captions**: Downloads the captured captions as a YAML file
+- **View Captions**: Opens the captions in a new browser tab for review
+- **Clear Transcript**: Clears all captured captions from memory (useful for starting fresh in a new meeting segment)
+
+## Security & Privacy
+
+This extension follows security best practices:
+
+- **Manifest V3**: Uses the latest Chrome extension security model
+- **Minimal Permissions**: Only requests necessary permissions (`downloads`, `activeTab`)
+- **Host Restrictions**: Only works on `teams.microsoft.com` domains
+- **Content Security Policy**: Prevents code injection attacks
+- **Input Validation**: All messages are validated before processing
+- **Error Handling**: Centralized error handling prevents information leakage
+- **No External Requests**: All processing happens locally in your browser
+
 
 
 ## Sample data exported
@@ -52,6 +72,8 @@ Time: 21:56:08
 ## Browsing Captured Captions
 
 You can also view the captured captions in the browser. To do this, click on the extension icon in the toolbar and select "View Captions". This will open a new tab with the captured captions.
+
+If you need to start fresh (for example, when moving to a new topic or meeting segment), you can click "Clear Transcript" to remove all captured captions from memory.
 
 ![alt text](IMG/7.png)
 
@@ -84,12 +106,28 @@ But what if you can't use extensions for security reasons? Well, in this case:
 
 Please note that this extension works on Microsoft Teams pages only during the meetings and only when the live captions are first turned on.
 
-## Recent Improvements (v3.6.3+)
+## Recent Improvements (v4.0.0+)
+
+### 🆕 Clear Transcript Functionality
+- **Clear Transcript Button**: New red button in popup to clear all captured captions
+- **Memory Reset**: Completely clears transcript data, processed captions, and tracking information
+- **Visual Feedback**: Button shows "Cleared!" confirmation with color change
+- **Error Handling**: Robust error handling with user-friendly feedback
+- **Testing Suite**: Comprehensive tests for clear functionality
+
+### 🔒 Security & Best Practices Enhancements
+- **Centralized Error Handling**: New ErrorHandler module for consistent error management
+- **Input Validation**: All extension messages are validated before processing
+- **Content Security Policy**: Added CSP headers to prevent code injection attacks
+- **Operational Error Classification**: Distinguishes between expected and unexpected errors
+- **Safe Async Operations**: Wrapped async operations with proper error handling
+- **Message Type Validation**: Explicit validation of allowed message types
 
 ### 🏗️ Modular Architecture Refactor
 The extension has been completely refactored from a monolithic structure into a clean, maintainable modular architecture:
 
-- **Config Module**: Centralized configuration and constants
+- **Config Module**: Centralized configuration and constants with frozen objects
+- **ErrorHandler Module**: Centralized error handling and logging (NEW)
 - **DOMUtils Module**: Safe DOM operations with comprehensive error handling
 - **TextProcessor Module**: Advanced text normalization and similarity algorithms
 - **StateManager Module**: Processing coordination and race condition prevention
@@ -100,16 +138,20 @@ The extension has been completely refactored from a monolithic structure into a 
 
 ### 🔧 Enhanced Reliability
 - **Improved Error Handling**: Comprehensive try-catch blocks and graceful degradation
+- **Context-Aware Logging**: All errors include context information for better debugging
 - **Memory Management**: Automatic cleanup prevents memory leaks during long meetings
 - **Race Condition Prevention**: Centralized state management eliminates timing conflicts
 - **DOM Selector Resilience**: Multiple fallback strategies for different Teams UI versions
 - **Performance Optimization**: Debounced processing and intelligent caching
+- **Chrome Runtime Error Handling**: Proper handling of Chrome extension API errors
 
 ### 🧪 Development & Testing
-- **Comprehensive Test Suite**: Automated testing framework for all core functions
+- **Enhanced Test Suite**: Updated testing framework covering new error handling and clear functionality
+- **Clear Functionality Tests**: Dedicated tests for transcript clearing operations
+- **Error Handler Tests**: Validation of centralized error handling system
 - **Code Analysis Tools**: Static analysis for architectural validation
 - **Performance Monitoring**: Built-in performance tracking and optimization
-- **Developer Documentation**: Enhanced CLAUDE.md for future development guidance
+- **Developer Documentation**: Enhanced documentation for future development guidance
 
 ## Contributing (Developers only)
 

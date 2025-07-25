@@ -157,7 +157,76 @@ class CaptionTestSuite {
         }
     }
 
-    // Test 7: Error Handling Resilience
+    // Test 7: Clear Functionality
+    testClearFunctionality() {
+        console.log('\n🧹 Testing Clear Functionality...');
+        
+        // Check if CaptionSaver is available
+        if (typeof window.CaptionSaver === 'undefined') {
+            this.assert(false, 'CaptionSaver not available for clear testing');
+            return;
+        }
+        
+        // Test error handler availability
+        this.assert(typeof window.CaptionSaver.ErrorHandler !== 'undefined', 'ErrorHandler module available');
+        this.assert(typeof window.CaptionSaver.ErrorHandler.handleError === 'function', 'handleError method available');
+        this.assert(typeof window.CaptionSaver.ErrorHandler.createOperationalError === 'function', 'createOperationalError method available');
+        
+        const data = window.CaptionSaver.Data;
+        const controller = window.CaptionSaver.Controller;
+        const memoryManager = window.CaptionSaver.MemoryManager;
+        
+        // Store original state
+        const originalTranscript = [...data.transcriptArray];
+        const originalProcessed = new Set(memoryManager.processedCaptions);
+        const originalTracking = new Map(memoryManager.captionElementTracking);
+        
+        try {
+            // Add test data
+            data.transcriptArray = [
+                { Name: "Test Speaker", Text: "Test caption", Time: "10:30:00", ID: "test1" }
+            ];
+            memoryManager.processedCaptions.add("test1");
+            memoryManager.captionElementTracking.set("0:Test Speaker", {
+                text: "Test caption",
+                timestamp: Date.now(),
+                processed: true
+            });
+            
+            // Test clear functionality
+            const clearResult = controller.clearTranscript();
+            this.assert(clearResult === true, 'clearTranscript returns true on success');
+            this.assert(data.transcriptArray.length === 0, 'Transcript array cleared');
+            this.assert(memoryManager.processedCaptions.size === 0, 'Processed captions cleared');
+            this.assert(memoryManager.captionElementTracking.size === 0, 'Caption tracking cleared');
+            
+            // Test message handler
+            data.transcriptArray = [{ Name: "Test", Text: "Test", Time: "10:30:00", ID: "test2" }];
+            let responseReceived = false;
+            let responseSuccess = false;
+            
+            controller.handleMessage(
+                { message: "clear_transcript" },
+                null,
+                (response) => {
+                    responseReceived = true;
+                    responseSuccess = response && response.success;
+                }
+            );
+            
+            this.assert(responseReceived, 'Clear message handler responds');
+            this.assert(responseSuccess, 'Clear message handler returns success');
+            this.assert(data.transcriptArray.length === 0, 'Message handler clears transcript');
+            
+        } finally {
+            // Restore original state
+            data.transcriptArray = originalTranscript;
+            memoryManager.processedCaptions = originalProcessed;
+            memoryManager.captionElementTracking = originalTracking;
+        }
+    }
+
+    // Test 8: Error Handling Resilience
     testErrorHandling() {
         console.log('\n🚨 Testing Error Handling...');
         
@@ -238,6 +307,7 @@ class CaptionTestSuite {
             'testSafeDOMOperations',
             'testCaptionElementDetection',
             'testMemoryManagement',
+            'testClearFunctionality',
             'testErrorHandling',
             'testPerformance',
             'testIntegration'

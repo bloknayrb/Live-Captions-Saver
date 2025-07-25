@@ -1,7 +1,11 @@
 <!doctype html>
-<html>
+<html lang="en">
+
+</html>
 
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chat Transcript Saver</title>
     <style>
         body {
@@ -49,6 +53,14 @@
             background-color: #138496;
         }
 
+        #clearButton {
+            background-color: #dc3545;
+        }
+
+        #clearButton:hover {
+            background-color: #c82333;
+        }
+
         .button-container {
             display: flex;
             flex-direction: row;
@@ -71,6 +83,9 @@
     <div class="button-container">
         <button id="saveButton">Save Captions</button>
         <button id="viewButton">View Captions</button>
+    </div>
+    <div class="button-container">
+        <button id="clearButton">Clear Transcript</button>
     </div>
 </body>
 
